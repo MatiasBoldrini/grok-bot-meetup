@@ -18,7 +18,7 @@ describe('meetup config', () => {
   it('only stores the venue fields', () => {
     expect(DEFAULT_CONFIG).toEqual({
       place: 'Mendoza',
-      claimUrl: 'https://cursor.com/redeem/event/grok-bot-meetup-mendoza',
+      claimUrl: 'https://cursor.com/redeem/event/grok-bot-meetup-mendoza-stripe-oysmd4-9xxteg',
       morphSeconds: 10
     })
     expect(defaults()).not.toBe(DEFAULT_CONFIG)
