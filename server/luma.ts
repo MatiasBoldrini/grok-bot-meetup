@@ -1,3 +1,10 @@
+import {
+  AsistenciaError,
+  normalizarCorreo,
+  paseDeInvitado,
+  yaEntro,
+  type Pase
+} from '../src/meetup/asistencia'
 import { toAllocation, type Allocation, type LumaGuestRaw } from '../src/meetup/guest'
 
 const LUMA = 'https://public-api.luma.com'
@@ -134,4 +141,192 @@ export async function readWallState(env: LumaEnv, eventOverride = ''): Promise<W
     cache = { key: cacheKey, at: Date.now(), state }
     return state
   }
+}
+
+export type ResultadoAsistencia = {
+  created: boolean
+  email: string
+  name: string
+  qrUrl: string
+}
+
+export type EventoLuma = { id: string; name: string; startAt: string }
+export type TipoEntrada = { id: string; name: string }
+
+type LumaReponse = { ok: boolean; status: number; json: unknown }
+
+async function lumaSend(
+  apiKey: string,
+  method: 'GET' | 'POST',
+  path: string,
+  init: { query?: Record<string, string | undefined>; body?: unknown } = {}
+): Promise<LumaReponse> {
+  const url = new URL(LUMA + path)
+  for (const [k, v] of Object.entries(init.query ?? {})) {
+    if (v) url.searchParams.set(k, v)
+  }
+  const r = await fetch(url, {
+    method,
+    headers: {
+      'x-luma-api-key': apiKey,
+      accept: 'application/json',
+      ...(init.body ? { 'content-type': 'application/json' } : {})
+    },
+    body: init.body ? JSON.stringify(init.body) : undefined
+  })
+  const json = (await r.json().catch(() => ({}))) as unknown
+  return { ok: r.ok, status: r.status, json }
+}
+
+async function obtenerInvitado(apiKey: string, eventId: string, email: string): Promise<unknown | null> {
+  const r = await lumaSend(apiKey, 'GET', '/v1/events/guests/get', {
+    query: { event_id: eventId, id: email }
+  })
+  if (r.status === 404) return null
+  if (!r.ok) throw new AsistenciaError('luma')
+  return r.json
+}
+
+/**
+ * Alta. Luma l'ajoute en arriere-plan et ne renvoie que les adresses refusees.
+ * `send_email: false` : le mur montre le QR, il n'envoie pas le courriel Luma.
+ */
+async function agregarInvitado(apiKey: string, eventId: string, email: string, ticketTypeId = '') {
+  const body: Record<string, unknown> = {
+    event_id: eventId,
+    guests: [{ email }],
+    approval_status: 'approved',
+    send_email: false
+  }
+  if (ticketTypeId) body.ticket = { event_ticket_type_id: ticketTypeId }
+  const r = await lumaSend(apiKey, 'POST', '/v1/events/guests/add', { body })
+  if (!r.ok) throw new AsistenciaError('luma')
+  const skipped = (r.json as { skipped?: Array<{ email?: string }> }).skipped ?? []
+  if (skipped.some((s) => s.email?.toLowerCase() === email)) throw new AsistenciaError('omitido')
+}
+
+async function esperarInvitado(
+  apiKey: string,
+  eventId: string,
+  email: string,
+  attendre: (ms: number) => Promise<void>
+): Promise<unknown> {
+  for (let i = 0; i < 6; i++) {
+    const crudo = await obtenerInvitado(apiKey, eventId, email)
+    if (crudo && paseDeInvitado(eventId, crudo)) return crudo
+    await attendre(400)
+  }
+  throw new AsistenciaError('espera')
+}
+
+/**
+ * Le check-in n'est pas `guests/update-status` : ce POST ne change que
+ * Going / declined / waitlist. L'heure d'entree vit sur le billet. L'ancienne
+ * route reste servie (le changelog Luma le dit) et c'est elle qui la pose.
+ */
+async function marcarEntrada(
+  apiKey: string,
+  eventId: string,
+  email: string,
+  guestId: string,
+  attendre: (ms: number) => Promise<void>
+) {
+  for (let i = 0; i < 3; i++) {
+    const r = await lumaSend(apiKey, 'POST', '/v1/event/check-in-guest', { body: { api_id: guestId } })
+    if (r.ok) return
+    const apres = await obtenerInvitado(apiKey, eventId, email)
+    if (apres && yaEntro(apres)) return
+    if (i === 2) throw new AsistenciaError('luma')
+    await attendre(400)
+  }
+}
+
+function passeOuRien(eventId: string, crudo: unknown): Pase {
+  const pase = paseDeInvitado(eventId, crudo)
+  if (!pase) throw new AsistenciaError('espera')
+  return pase
+}
+
+/**
+ * Confirmer le courriel : creer l'invite s'il n'existe pas, poser l'entree,
+ * rendre l'URL de son QR. La cle reste dans l'environnement.
+ */
+function filas(json: unknown): Record<string, unknown>[] {
+  if (!json || typeof json !== 'object') return []
+  const entries = (json as { entries?: unknown }).entries
+  if (!Array.isArray(entries)) return []
+  return entries.filter((e): e is Record<string, unknown> => !!e && typeof e === 'object')
+}
+
+/** Evenements du calendrier. Sans `LUMA_EVENT_ID`, le mur n'a rien a deviner. */
+export async function listarEventos(env: LumaEnv): Promise<EventoLuma[]> {
+  if (!env.apiKey) throw new AsistenciaError('config')
+  const after = new Date(Date.now() - 36 * 3600e3).toISOString()
+  const r = await lumaSend(env.apiKey, 'GET', '/v1/calendars/events/list', {
+    query: { after, pagination_limit: '20', sort_column: 'start_at', sort_direction: 'asc' }
+  })
+  if (!r.ok) throw new AsistenciaError('luma')
+  const vus = new Set<string>()
+  const lista: EventoLuma[] = []
+  for (const entry of filas(r.json)) {
+    const ev = (
+      entry.event && typeof entry.event === 'object' ? entry.event : entry
+    ) as Record<string, unknown>
+    const id = typeof ev.id === 'string' ? ev.id : ''
+    if (!id || vus.has(id)) continue
+    vus.add(id)
+    lista.push({
+      id,
+      name: typeof ev.name === 'string' && ev.name ? ev.name : id,
+      startAt: typeof ev.start_at === 'string' ? ev.start_at : ''
+    })
+  }
+  return lista
+}
+
+/** Types de billet de l'evenement choisi. Un seul type n'est pas un choix. */
+export async function listarTipos(env: LumaEnv, eventId: string): Promise<TipoEntrada[]> {
+  if (!env.apiKey) throw new AsistenciaError('config')
+  const id = eventId.trim()
+  if (!id) return []
+  const r = await lumaSend(env.apiKey, 'GET', '/v1/events/ticket-types/list', {
+    query: { event_id: id }
+  })
+  if (!r.ok) throw new AsistenciaError('luma')
+  const lista: TipoEntrada[] = []
+  for (const entry of filas(r.json)) {
+    const tipo = (
+      entry.ticket_type && typeof entry.ticket_type === 'object' ? entry.ticket_type : entry
+    ) as Record<string, unknown>
+    const tid = typeof tipo.id === 'string' ? tipo.id : ''
+    if (!tid) continue
+    lista.push({ id: tid, name: typeof tipo.name === 'string' && tipo.name ? tipo.name : tid })
+  }
+  return lista
+}
+
+export async function registrarAsistencia(
+  env: LumaEnv,
+  emailBrut: string,
+  opciones: { eventId?: string; ticketTypeId?: string; attendre?: (ms: number) => Promise<void> } = {}
+): Promise<ResultadoAsistencia> {
+  const attendre = opciones.attendre ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)))
+  const email = normalizarCorreo(emailBrut)
+  if (!email) throw new AsistenciaError('correo')
+  if (!env.apiKey) throw new AsistenciaError('config')
+
+  const event = await resolveEvent({ ...env, eventId: opciones.eventId?.trim() || env.eventId }).catch(() => {
+    throw new AsistenciaError('luma')
+  })
+  let created = false
+  let crudo = await obtenerInvitado(env.apiKey, event.id, email)
+  if (!crudo) {
+    await agregarInvitado(env.apiKey, event.id, email, opciones.ticketTypeId?.trim() || '')
+    created = true
+    crudo = await esperarInvitado(env.apiKey, event.id, email, attendre)
+  }
+  const pase = passeOuRien(event.id, crudo)
+  await marcarEntrada(env.apiKey, event.id, email, pase.id, attendre)
+  invalidateLuma()
+  return { created, email: pase.email, name: pase.name, qrUrl: pase.qrUrl }
 }

@@ -1,6 +1,8 @@
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import BloubBot from '@/components/BloubBot.vue'
+import BotTile from '@/components/BotTile.vue'
+import ChampBots from '@/components/ChampBots.vue'
 import ClaimQr from '@/components/ClaimQr.vue'
 import MeetupSettings from '@/components/MeetupSettings.vue'
 import { EXPRESSIONS, type ExpressionId } from '@/bot/expressions'
@@ -8,6 +10,8 @@ import { COLORS, SHAPES, type ColorId, type ShapeId } from '@/bot/skins'
 import type { StateId } from '@/bot/states'
 import { langue, t } from '@/i18n'
 import { applyMeta, clampMorphSeconds, readConfig, welcome, writeConfig, type MeetupConfig } from '@/meetup/config'
+import { overlayBase, type OverlayReglage } from '@/meetup/overlay'
+import { aligner, publicar, seccionDe } from '@/meetup/rutas'
 
 /**
  * Meetup wall: banner on the left, oversized ball on the right. A check-in
@@ -30,6 +34,7 @@ const DEMO = [
 
 const PAPER = '#f6f6f6'
 const mur = ref<MeetupConfig>(readConfig())
+const overlay = ref<OverlayReglage>(overlayBase())
 watch(
   [mur, langue],
   ([c]) => {
@@ -60,11 +65,120 @@ const block = ref(0)
 const playing = ref(true)
 const shape = ref<ShapeId>('cercle')
 const color = ref<ColorId>('encre')
+/** Un teint choisi au menu reste. Le clic principal le relance. */
+let teintFixe = false
+const coloresAbiertos = ref(false)
+const lugarColores = ref<{ x: number; y: number } | null>(null)
+const teintActuel = computed(() => COLORS.find((c) => c.id === color.value)?.hex ?? '#0a0a0c')
+/** Encre du bouton : le fond est le teint du bot, le texte reste lisible dessus. */
+const encrePase = computed(() => {
+  const v = parseInt(teintActuel.value.slice(1), 16)
+  const r = (v >> 16) & 255
+  const g = (v >> 8) & 255
+  const b = v & 255
+  const y = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255
+  return y > 0.62 ? '#111111' : '#ffffff'
+})
 const expression = ref<ExpressionId>('neutre')
-const claim = ref(false)
+const ouverte = seccionDe(location.pathname)
+const claim = ref(ouverte === 'canjear')
+/**
+ * L'ouverture est la page. `/` y arrive ; le claim est l'autre temps.
+ * Pas un reglage stocke : un temps de la seance, pas une donnee du lieu.
+ */
+const inicio = ref(!claim.value)
 const edition = ref(new URLSearchParams(location.search).has('setup'))
-const btnRetour = ref<HTMLButtonElement | null>(null)
 const btnClaim = ref<HTMLButtonElement | null>(null)
+const pied = ref<HTMLElement | null>(null)
+
+/** Menu de l'element touche. Absent du DOM tant qu'on n'a pas clique. */
+type Pastille =
+  | { tipo: 'principal'; x: number; y: number }
+  | { tipo: 'mini'; i: number; x: number; y: number }
+  | { tipo: 'firma'; x: number; y: number }
+  | { tipo: 'titulo'; x: number; y: number }
+const pastille = ref<Pastille | null>(null)
+/** Brouillon du titre : le champ peut se vider sans que la phrase traduite y revienne. */
+const brouillonTitre = ref('')
+const inputCorreo = ref<HTMLInputElement | null>(null)
+const correo = ref('')
+/**
+ * Caret du courrier, en coordonnees client — le meme repere que la souris.
+ * L'objet est mute sur place : le moteur le relit a chaque image, un ref
+ * neuf a chaque frappe redessinerait le mur pour rien.
+ */
+const pointCaret: { x: number; y: number; nx: number } = { x: 0, y: 0, nx: -1 }
+const caretActif = ref(false)
+let caretRaf = 0
+let miroirCaret: HTMLSpanElement | null = null
+
+function indexCaret(input: HTMLInputElement) {
+  // Un `type=email` rend `selectionStart` nul : le caret n'y est pas lisible.
+  const debut = input.selectionStart
+  if (debut == null) return input.value.length
+  const fin = input.selectionEnd ?? debut
+  return input.selectionDirection === 'backward' ? debut : fin
+}
+
+/** Largeur du texte avant le caret, avec la meme police que le champ. */
+function largeurCaret(input: HTMLInputElement, index: number) {
+  if (!miroirCaret) {
+    miroirCaret = document.createElement('span')
+    miroirCaret.style.cssText =
+      'position:fixed;left:0;top:0;visibility:hidden;white-space:pre;pointer-events:none'
+    document.body.appendChild(miroirCaret)
+  }
+  const style = getComputedStyle(input)
+  miroirCaret.style.font = style.font
+  miroirCaret.style.letterSpacing = style.letterSpacing
+  miroirCaret.textContent = input.value.slice(0, index)
+  return miroirCaret.getBoundingClientRect().width
+}
+
+function poserCaret() {
+  const input = inputCorreo.value
+  if (!input) return
+  const style = getComputedStyle(input)
+  const rect = input.getBoundingClientRect()
+  const pad = parseFloat(style.paddingLeft) || 0
+  const bord = parseFloat(style.borderLeftWidth) || 0
+  pointCaret.x = rect.left + bord + pad + largeurCaret(input, indexCaret(input)) - input.scrollLeft
+  pointCaret.y = rect.top + rect.height / 2
+  /*
+   * Avance dans le champ, -1 a 1. Un courriel remplit rarement tout le champ :
+   * le debattement entier est atteint aux deux tiers de sa largeur, pour que
+   * les yeux parcourent leur course pendant qu'on tape, pas seulement a la fin.
+   */
+  const course = Math.max(1, (rect.width - bord * 2 - pad * 2) * 0.66)
+  const avance = (pointCaret.x - rect.left - bord - pad) / course
+  pointCaret.nx = Math.min(1, Math.max(0, avance)) * 2 - 1
+}
+
+function boucleCaret() {
+  caretRaf = requestAnimationFrame(boucleCaret)
+  const input = inputCorreo.value
+  if (!input || document.activeElement !== input) {
+    caretActif.value = false
+    cancelAnimationFrame(caretRaf)
+    caretRaf = 0
+    return
+  }
+  poserCaret()
+}
+
+function auFocusCaret() {
+  poserCaret()
+  caretActif.value = true
+  if (!caretRaf) caretRaf = requestAnimationFrame(boucleCaret)
+}
+
+function auBlurCaret() {
+  caretActif.value = false
+}
+
+const enviando = ref(false)
+const errorPase = ref('')
+const pase = ref<{ name: string; qrUrl: string } | null>(null)
 const demoRestants = [...DEMO]
 
 let syncTimer = 0
@@ -74,9 +188,137 @@ let feteTimer = 0
 let enFete = false
 
 function sousTitre() {
-  if (claim.value) return t('meetup.cityClaim')
+  if (inicio.value) return overlay.value.titulo.trim() || t('meetup.started')
+  if (claim.value) return mur.value.claimTitle.trim() || t('meetup.cityClaim')
   const ville = mur.value.place.trim()
   return ville ? t('meetup.city', { place: ville }) : t('meetup.cityBare')
+}
+
+const textePronto = computed(() => overlay.value.pronto.trim() || t('meetup.soon'))
+const texteFirma = computed(() => overlay.value.firma.trim() || t('meetup.presented'))
+
+function styleTitre() {
+  if (!inicio.value) return undefined
+  return {
+    '--titulo-tam': `${overlay.value.tituloTam}rem`,
+    color: overlay.value.tituloColor,
+    transform: `translate(${overlay.value.tituloX}rem, ${overlay.value.tituloY}rem)`
+  }
+}
+
+function stylePronto() {
+  if (!inicio.value) return undefined
+  return {
+    '--pronto-tam': `${overlay.value.prontoTam}rem`,
+    color: overlay.value.prontoColor,
+    transform: `translate(${overlay.value.prontoX}rem, ${overlay.value.prontoY}rem)`
+  }
+}
+
+const ENCRE_FIRMA = '#111111'
+const BLANC_FIRMA = '#ffffff'
+/** Teinte du bloc SpaceX, choisie par contraste avec le fond mesure. */
+const firmaTinta = ref(ENCRE_FIRMA)
+
+function hexDe(css: string): string | null {
+  if (!css || css === 'transparent' || css === 'none') return null
+  if (/^#[0-9a-f]{6}$/i.test(css)) return css.toLowerCase()
+  const m = css.match(/rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)(?:[,\s/]+([\d.]+))?\s*\)/)
+  if (!m) return null
+  const alpha = m[4] === undefined ? 1 : Number(m[4])
+  if (!(alpha >= 0.5)) return null
+  const canal = (n: string) => Math.round(Number(n)).toString(16).padStart(2, '0')
+  return `#${canal(m[1]!)}${canal(m[2]!)}${canal(m[3]!)}`
+}
+
+function luminance(hex: string) {
+  const v = parseInt(hex.slice(1), 16)
+  const lin = (c: number) => {
+    const x = c / 255
+    return x <= 0.04045 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4
+  }
+  return 0.2126 * lin((v >> 16) & 255) + 0.7152 * lin((v >> 8) & 255) + 0.0722 * lin(v & 255)
+}
+
+function contraste(a: string, b: string) {
+  const hi = Math.max(luminance(a), luminance(b))
+  const lo = Math.min(luminance(a), luminance(b))
+  return (hi + 0.05) / (lo + 0.05)
+}
+
+function couleurDe(el: Element): string | null {
+  /*
+   * Le clic tombe sur `.corps`, rempli couleur papier pour boucher les yeux.
+   * La couleur VUE est le rectangle d'encre masque par-dessus.
+   */
+  const avatar = el.closest('.avatar')
+  if (avatar && el.closest('.corps')) {
+    const encre = avatar.querySelector('g[mask] rect')
+    const fill = encre ? hexDe(getComputedStyle(encre).fill) : null
+    if (fill) return fill
+  }
+  if (el instanceof SVGElement) {
+    const fill = hexDe(getComputedStyle(el).fill)
+    if (fill) return fill
+  }
+  let node: Element | null = el
+  while (node) {
+    const fond = hexDe(getComputedStyle(node).backgroundColor)
+    if (fond) return fond
+    node = node.parentElement
+  }
+  return null
+}
+
+/** Couleur dominante sous le rectangle, puis noir ou blanc selon le contraste. */
+function mesurerFirma() {
+  const piece = pied.value?.querySelector('.firma-piece')
+  if (!(piece instanceof HTMLElement)) return
+  const r = piece.getBoundingClientRect()
+  if (r.width < 2 || r.height < 2) return
+  const comptes = new Map<string, number>()
+  for (let iy = 0; iy < 3; iy++) {
+    for (let ix = 0; ix < 3; ix++) {
+      const x = r.left + (r.width * (ix + 0.5)) / 3
+      const y = r.top + (r.height * (iy + 0.5)) / 3
+      const dessous = document.elementsFromPoint(x, y).find((el) => !el.closest('.presente, .pastille, .reglages'))
+      const hex = dessous ? couleurDe(dessous) : null
+      if (!hex) continue
+      comptes.set(hex, (comptes.get(hex) ?? 0) + 1)
+    }
+  }
+  let fond = PAPER
+  let n = 0
+  for (const [hex, c] of comptes) {
+    if (c > n) {
+      fond = hex
+      n = c
+    }
+  }
+  const noir = contraste(fond, ENCRE_FIRMA)
+  const blanc = contraste(fond, BLANC_FIRMA)
+  const gagne = blanc > noir ? BLANC_FIRMA : ENCRE_FIRMA
+  if (firmaTinta.value !== gagne) firmaTinta.value = gagne
+}
+
+let firmaRaf = 0
+let firmaMesure = 0
+function boucleFirma(ms: number) {
+  firmaRaf = requestAnimationFrame(boucleFirma)
+  if (!inicio.value || !overlay.value.firmaVisible) return
+  if (ms - firmaMesure < 120) return
+  firmaMesure = ms
+  mesurerFirma()
+}
+
+function styleFirma() {
+  const blanca = firmaTinta.value === BLANC_FIRMA
+  return {
+    '--firma-tam': String(overlay.value.firmaTam),
+    '--firma-filtro': blanca ? 'invert(1)' : 'none',
+    color: blanca ? BLANC_FIRMA : ENCRE_FIRMA,
+    transform: `translate(${overlay.value.firmaX}rem, ${overlay.value.firmaY}rem)`
+  }
 }
 
 function prenom(nom: string) {
@@ -89,11 +331,20 @@ function autre<T>(liste: readonly T[], actuel: T): T {
   return (choix[Math.floor(Math.random() * choix.length)] ?? liste[0])!
 }
 
-/** Figure, couleur et yeux independants — pas une sequence. Idle, pas de swirl. */
+/**
+ * Figure, couleur et yeux independants — pas une sequence. Idle, pas de swirl.
+ * L'ecran d'ouverture ne quitte pas le cercle : les autres silhouettes restent
+ * au mur.
+ */
 function tirerBot() {
-  shape.value = autre(FORMES, shape.value)
-  color.value = autre(TEINTES, color.value)
+  if (!inicio.value) shape.value = autre(FORMES, shape.value)
+  if (!(inicio.value && teintFixe)) color.value = autre(TEINTES, color.value)
   expression.value = autre(VISAGES, expression.value)
+}
+
+function choisirCouleur(id: ColorId) {
+  color.value = id
+  teintFixe = true
 }
 
 function relancerMorph() {
@@ -103,10 +354,236 @@ function relancerMorph() {
   }, clampMorphSeconds(mur.value.morphSeconds) * 1000)
 }
 
-function auClicBot() {
+function ouvrirPastille(
+  base: { tipo: 'principal' } | { tipo: 'mini'; i: number } | { tipo: 'firma' } | { tipo: 'titulo' },
+  x: number,
+  y: number
+) {
+  const largeur = base.tipo === 'principal' ? 280 : 240
+  const boite =
+    base.tipo === 'mini' ? 214 : base.tipo === 'firma' ? 156 : base.tipo === 'titulo' ? 196 : 540
+  pastille.value = {
+    ...base,
+    x: Math.min(Math.max(12, x + 14), window.innerWidth - largeur),
+    y: Math.min(Math.max(12, y + 14), window.innerHeight - boite)
+  }
+}
+
+function remPx() {
+  return parseFloat(getComputedStyle(document.documentElement).fontSize) || 16
+}
+
+/**
+ * Le menu reste colle au cadre. `ouvrir` le pose ; sans cela, un deplacement
+ * au clic principal ne fait que le suivre s'il est deja la.
+ */
+function collerFirma(ouvrir = true) {
+  const piece = pied.value?.querySelector('.firma-piece')
+  if (!(piece instanceof HTMLElement)) return
+  const r = piece.getBoundingClientRect()
+  const largeur = 240
+  if (!ouvrir && pastille.value?.tipo !== 'firma') return
+  const aDroite = r.right + 14
+  pastille.value = {
+    tipo: 'firma',
+    x: aDroite + largeur > window.innerWidth ? Math.max(12, r.left - largeur - 14) : aDroite,
+    y: Math.min(Math.max(12, r.top), window.innerHeight - 156)
+  }
+}
+
+type Saisie = {
+  el: HTMLElement
+  move: (e: PointerEvent) => void
+  up: () => void
+}
+let saisie: Saisie | null = null
+
+function lacher() {
+  if (!saisie) return
+  saisie.el.removeEventListener('pointermove', saisie.move)
+  saisie.el.removeEventListener('pointerup', saisie.up)
+  saisie.el.removeEventListener('pointercancel', saisie.up)
+  saisie = null
+}
+
+function tenir(el: HTMLElement, e: PointerEvent, move: (ev: PointerEvent) => void) {
+  const up = () => lacher()
+  lacher()
+  saisie = { el, move, up }
+  el.setPointerCapture(e.pointerId)
+  el.addEventListener('pointermove', move)
+  el.addEventListener('pointerup', up)
+  el.addEventListener('pointercancel', up)
+}
+
+/** Clic principal : la signature suit le pointeur. Le menu est au clic secondaire. */
+function auPointeurFirma(e: PointerEvent) {
+  if (e.button !== 0) return
+  const el = e.currentTarget
+  if (!(el instanceof HTMLElement)) return
+  e.preventDefault()
+  const x0 = e.clientX
+  const y0 = e.clientY
+  const fx = overlay.value.firmaX
+  const fy = overlay.value.firmaY
+  const unite = remPx()
+  let bouge = false
+  tenir(el, e, (ev) => {
+    const dx = ev.clientX - x0
+    const dy = ev.clientY - y0
+    if (!bouge && Math.hypot(dx, dy) < 4) return
+    bouge = true
+    overlay.value = { ...overlay.value, firmaX: fx + dx / unite, firmaY: fy + dy / unite }
+    collerFirma(false)
+  })
+}
+
+function auMenuFirma(e: MouseEvent) {
+  e.preventDefault()
+  collerFirma()
+}
+
+/** Poignee du coin : l'echelle suit la distance au centre, comme un cadre d'image. */
+function auPoigneeFirma(e: PointerEvent) {
+  if (e.button !== 0) return
+  const el = e.currentTarget
+  if (!(el instanceof HTMLElement)) return
+  e.preventDefault()
+  e.stopPropagation()
+  const piece = pied.value?.querySelector('.firma-piece')
+  const r = piece instanceof HTMLElement ? piece.getBoundingClientRect() : null
+  const cx = r ? r.left + r.width / 2 : e.clientX
+  const cy = r ? r.top + r.height / 2 : e.clientY
+  const d0 = Math.max(12, Math.hypot(e.clientX - cx, e.clientY - cy))
+  const tam0 = overlay.value.firmaTam
+  tenir(el, e, (ev) => {
+    const d1 = Math.hypot(ev.clientX - cx, ev.clientY - cy)
+    const n = Math.min(2, Math.max(0.6, tam0 * (d1 / d0)))
+    overlay.value = { ...overlay.value, firmaTam: Math.round(n * 20) / 20 }
+    collerFirma()
+  })
+}
+
+function fermerPopups() {
+  pastille.value = null
+  coloresAbiertos.value = false
+  lugarColores.value = null
+}
+
+/** Clic principal : la couleur suivante, sauf si un menu est ouvert : la on le ferme. */
+function auClicPrincipal() {
+  if (fermeture || pastille.value || coloresAbiertos.value) {
+    fermeture = false
+    fermerPopups()
+    return
+  }
   if (enFete) return
+  teintFixe = false
   tirerBot()
   relancerMorph()
+}
+
+function auClicSecondaire(e: MouseEvent) {
+  e.preventDefault()
+  ouvrirPastille({ tipo: 'principal' }, e.clientX, e.clientY)
+}
+
+/**
+ * Clic secondaire sur « Ya comenzamos ». Le champ montre la phrase a l'ecran ;
+ * une valeur vide retombe sur la traduction, donc ouvrir le menu ne la fige pas.
+ */
+function auMenuTitre(e: MouseEvent) {
+  if (!inicio.value) return
+  e.preventDefault()
+  brouillonTitre.value = overlay.value.titulo || t('meetup.started')
+  ouvrirPastille({ tipo: 'titulo' }, e.clientX, e.clientY)
+  void nextTick(() => {
+    const champ = document.querySelector<HTMLInputElement>('.pastille-texte')
+    if (!champ) return
+    champ.focus()
+    champ.select()
+  })
+}
+
+function poserTitre(valeur: string) {
+  overlay.value = {
+    ...overlay.value,
+    titulo: valeur.trim() === t('meetup.started') ? '' : valeur
+  }
+}
+
+function ouvrirMini(i: number, x: number, y: number) {
+  ouvrirPastille({ tipo: 'mini', i }, x, y)
+}
+
+/**
+ * Le pointerdown qui ferme le menu est suivi d'un clic. Sans ce drapeau, ce
+ * clic changerait aussi la couleur du bot.
+ */
+let fermeture = false
+
+function auDehors(e: PointerEvent) {
+  const cible = e.target
+  if (cible instanceof Element && cible.closest('.pastille, .teintes')) return
+  // La firma se deplace au clic principal : son propre menu reste accroche.
+  if (pastille.value?.tipo === 'firma' && cible instanceof Element && cible.closest('.firma-piece')) return
+  if (!pastille.value) return
+  pastille.value = null
+  // Le clic est une tache plus tard : un setTimeout(0) partait avant lui.
+  if (e.button === 0) fermeture = true
+}
+
+function auClicApresFermeture(e: MouseEvent) {
+  if (!fermeture) return
+  fermeture = false
+  e.preventDefault()
+  e.stopPropagation()
+}
+
+/**
+ * Capture sur la page : le pointerdown a peut-etre deja ferme le menu, et le
+ * clic du bot arriverait encore. On le coupe avant qu'il change la couleur.
+ */
+function auClicPage(e: MouseEvent) {
+  if (!pastille.value && !coloresAbiertos.value && !fermeture) return
+  const cible = e.target
+  if (!(cible instanceof Element)) return
+  if (cible.closest('.pastille, .teintes')) return
+  if (pastille.value?.tipo === 'firma' && cible.closest('.firma-piece')) return
+  fermerPopups()
+  fermeture = false
+  if (cible.closest('.avatar, .grain')) {
+    e.preventDefault()
+    e.stopPropagation()
+  }
+}
+
+/** Le nuage de couleurs flotte au-dessus de la scene, pas dans la carte. */
+function basculerColores(e: MouseEvent) {
+  if (coloresAbiertos.value) {
+    coloresAbiertos.value = false
+    lugarColores.value = null
+    return
+  }
+  const el = e.currentTarget
+  if (!(el instanceof HTMLElement)) return
+  const r = el.getBoundingClientRect()
+  const ancho = 200
+  const alto = 112
+  const x = Math.min(Math.max(12, r.left + r.width / 2 - ancho / 2), window.innerWidth - ancho - 12)
+  const arriba = r.top - alto - 10
+  lugarColores.value = {
+    x,
+    y: arriba >= 12 ? arriba : Math.min(r.bottom + 10, window.innerHeight - alto - 12)
+  }
+  coloresAbiertos.value = true
+}
+
+function auPointeurPastille(e: PointerEvent) {
+  e.stopPropagation()
+  const cible = e.target
+  if (cible instanceof Element && cible.closest('.muestra')) return
+  coloresAbiertos.value = false
 }
 
 function mouvementReduit() {
@@ -175,18 +652,82 @@ async function syncMur() {
 
 function ouvrirClaim() {
   if (claim.value) return
+  inicio.value = false
   claim.value = true
   lancerFete()
   relancerMorph()
-  void nextTick(() => btnRetour.value?.focus())
+  publicar('canjear')
+  void nextTick(() => {
+    inputCorreo.value?.focus()
+    auFocusCaret()
+  })
+}
+
+function limpiarPase() {
+  pase.value = null
+  correo.value = ''
+  errorPase.value = ''
+  enviando.value = false
+}
+
+function mensajePase(codigo: string) {
+  if (codigo === 'correo') return t('meetup.emailInvalid')
+  if (codigo === 'config') return t('meetup.emailMissing')
+  if (codigo === 'omitido') return t('meetup.emailSkipped')
+  if (codigo === 'espera') return t('meetup.emailWait')
+  return t('meetup.emailFailed')
+}
+
+async function enviarCorreo() {
+  if (enviando.value) return
+  const campo = inputCorreo.value
+  if (campo && !campo.checkValidity()) {
+    campo.reportValidity()
+    return
+  }
+  enviando.value = true
+  errorPase.value = ''
+  try {
+    const r = await fetch('/wall/check-in', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email: correo.value })
+    })
+    const j = (await r.json().catch(() => ({}))) as { error?: string; name?: string; qrUrl?: string }
+    if (!r.ok || !j.qrUrl) {
+      errorPase.value = mensajePase(j.error || '')
+      return
+    }
+    pase.value = { name: j.name || correo.value.trim(), qrUrl: j.qrUrl }
+  } catch {
+    errorPase.value = t('meetup.emailFailed')
+  } finally {
+    enviando.value = false
+  }
+}
+
+function otroPase() {
+  limpiarPase()
+  void nextTick(() => {
+    inputCorreo.value?.focus()
+    auFocusCaret()
+  })
 }
 
 function fermerClaim() {
   if (!claim.value) return
   claim.value = false
+  inicio.value = true
+  limpiarPase()
   relancerMorph()
   if (!enFete) state.value = 'idle'
+  publicar('comenzar')
   void nextTick(() => btnClaim.value?.focus())
+}
+
+/** Le retour ne quitte que le claim : l'ouverture n'a pas d'ecran derriere. */
+function fermerCouche() {
+  if (claim.value) fermerClaim()
 }
 
 function fermerEdition() {
@@ -195,11 +736,15 @@ function fermerEdition() {
 
 function auClavier(e: KeyboardEvent) {
   if (e.key === 'Escape') {
+    if (pastille.value) {
+      pastille.value = null
+      return
+    }
     if (edition.value) {
       fermerEdition()
       return
     }
-    fermerClaim()
+    fermerCouche()
     return
   }
   if (e.target instanceof HTMLInputElement || e.target instanceof HTMLButtonElement) return
@@ -209,38 +754,181 @@ function auClavier(e: KeyboardEvent) {
   }
 }
 
+/**
+ * Le bouton qui se derobe, comme on le fait d'habitude : un seul translate,
+ * ease par la transition CSS, pas une boucle qui le projette. Quand le
+ * pointeur arrive tout contre, il glisse de `FUITE_PASO` dans la direction
+ * OPPOSEE au pointeur — sur les deux axes, pas seulement x — et il reste la.
+ * Le chemin parcouru s'ADDITIONNE : `FUITE_TOTAL` au total, puis il ne bouge
+ * plus jamais et on peut l'attraper. Un rayon autour de la place d'origine ne
+ * suffisait pas : au bord du cercle, un curseur arrive de cote et le fait
+ * glisser le long du bord sans fin. `FUITE_PAUSA` evite qu'un second
+ * evenement, tire pendant le glissement, ajoute un deuxieme pas.
+ * Le tactile n'a pas de survol, et `prefers-reduced-motion` le laisse fixe.
+ */
+const FUITE_PASO = 110
+const FUITE_TOTAL = 220
+const FUITE_CERCA = 14
+const FUITE_PAUSA = 380
+const FUITE_MINIMO = 24
+const fuite = { x: 0, y: 0 }
+let fuiteDesde = 0
+let fuiteRecorrido = 0
+
+function poserFuite(el: HTMLElement | null) {
+  if (!el) return
+  el.style.transform =
+    Math.abs(fuite.x) > 0.4 || Math.abs(fuite.y) > 0.4
+      ? `translate(${fuite.x.toFixed(1)}px, ${fuite.y.toFixed(1)}px)`
+      : ''
+}
+
+/** Translation reellement appliquee en ce moment, glissement en cours compris. */
+function fuiteVisible(el: HTMLElement) {
+  const m = getComputedStyle(el).transform
+  if (!m || m === 'none') return { x: 0, y: 0 }
+  const mat = new DOMMatrixReadOnly(m)
+  return { x: mat.m41, y: mat.m42 }
+}
+
+function auFuiteClaim(e: PointerEvent) {
+  const el = btnClaim.value
+  const calme =
+    !el ||
+    !inicio.value ||
+    claim.value ||
+    e.pointerType === 'touch' ||
+    !window.matchMedia('(pointer: fine)').matches ||
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  if (calme) {
+    if (fuite.x || fuite.y || fuiteRecorrido) {
+      fuite.x = 0
+      fuite.y = 0
+      fuiteRecorrido = 0
+      poserFuite(el)
+    }
+    return
+  }
+  // el chemin est epuise : il reste ou il est, pour de bon
+  const resto = FUITE_TOTAL - fuiteRecorrido
+  if (resto < FUITE_MINIMO) return
+  if (performance.now() - fuiteDesde < FUITE_PAUSA) return
+  // le rectangle est celui que l'on VOIT : c'est lui que le pointeur approche
+  const r = el.getBoundingClientRect()
+  const horsX = e.clientX < r.left ? r.left - e.clientX : e.clientX > r.right ? e.clientX - r.right : 0
+  const horsY = e.clientY < r.top ? r.top - e.clientY : e.clientY > r.bottom ? e.clientY - r.bottom : 0
+  if (Math.hypot(horsX, horsY) > FUITE_CERCA) return
+
+  let dx = r.left + r.width / 2 - e.clientX
+  let dy = r.top + r.height / 2 - e.clientY
+  let d = Math.hypot(dx, dy)
+  if (d < 1) {
+    // pile au centre : n'importe quelle direction vaut mieux que NaN
+    dx = 1
+    dy = 0
+    d = 1
+  }
+
+  // base : la place d'ORIGINE, deduite de ce qui est dessine et de ce qui est applique
+  const vu = fuiteVisible(el)
+  const homeX = r.left - vu.x
+  const homeY = r.top - vu.y
+
+  // le dernier pas est raccourci pour tomber pile sur le total
+  const pas = Math.min(FUITE_PASO, resto)
+  let x = fuite.x + (dx / d) * pas
+  let y = fuite.y + (dy / d) * pas
+  const marge = 10
+  x = Math.min(window.innerWidth - marge - r.width - homeX, Math.max(marge - homeX, x))
+  y = Math.min(window.innerHeight - marge - r.height - homeY, Math.max(marge - homeY, y))
+
+  // coince contre un bord de fenetre : rien ne bouge, on peut cliquer
+  const fait = Math.hypot(x - fuite.x, y - fuite.y)
+  if (fait < FUITE_MINIMO) return
+
+  fuite.x = x
+  fuite.y = y
+  fuiteRecorrido += fait
+  fuiteDesde = performance.now()
+  poserFuite(el)
+}
+
+function auPopState() {
+  const s = seccionDe(location.pathname)
+  claim.value = s === 'canjear'
+  inicio.value = !claim.value
+}
+
 onMounted(() => {
+  aligner(claim.value ? 'canjear' : 'comenzar')
   tirerBot()
   void syncMur()
   syncTimer = window.setInterval(() => void syncMur(), 2000)
   relancerMorph()
+  firmaRaf = requestAnimationFrame(boucleFirma)
   window.addEventListener('keydown', auClavier)
+  window.addEventListener('popstate', auPopState)
+  window.addEventListener('click', auClicApresFermeture, true)
+  window.addEventListener('pointermove', auFuiteClaim)
 })
 
 watch(() => mur.value.morphSeconds, () => relancerMorph())
 
+watch(pastille, (p, avant) => {
+  if (p?.tipo !== 'principal') {
+    coloresAbiertos.value = false
+    lugarColores.value = null
+  }
+  if (!!p === !!avant) return
+  if (p) window.addEventListener('pointerdown', auDehors, true)
+  else window.removeEventListener('pointerdown', auDehors, true)
+})
+
 onBeforeUnmount(() => {
+  cancelAnimationFrame(firmaRaf)
+  cancelAnimationFrame(caretRaf)
+  miroirCaret?.remove()
   clearInterval(syncTimer)
   clearInterval(morphTimer)
   clearTimeout(bulleTimer)
   clearTimeout(feteTimer)
   window.removeEventListener('keydown', auClavier)
+  window.removeEventListener('popstate', auPopState)
+  window.removeEventListener('pointerdown', auDehors, true)
+  window.removeEventListener('click', auClicApresFermeture, true)
+  window.removeEventListener('pointermove', auFuiteClaim)
+  lacher()
 })
 
 </script>
 
 <template>
-  <div class="mur" :class="claim && 'mur--claim'">
+  <div
+    class="mur"
+    :class="[claim && 'mur--claim', inicio && 'mur--inicio']"
+    @click.capture="auClicPage"
+    :style="inicio ? { '--bot-escala': overlay.escala, '--bot-alto': overlay.altura, '--texto-alto': overlay.textoY } : undefined"
+  >
     <h1 class="sr-only">{{ t('meetup.title') }}</h1>
+
+    <ChampBots
+      v-if="inicio"
+      @choisir="ouvrirMini"
+      :velocidad="overlay.velocidad"
+      :formas="overlay.formas"
+      :colores="overlay.colores"
+      :ojos="overlay.ojos"
+      :tamano="overlay.tamano"
+      :cantidad="overlay.cantidad"
+    />
 
     <!-- Monte en permanence : une transition ne joue pas au premier style, et
          demonter le bouton a la fermeture lui interdirait de s'effacer. -->
     <button
-      ref="btnRetour"
       type="button"
       class="retour"
       :inert="!claim || undefined"
-      @click="fermerClaim"
+      @click="fermerCouche"
     >
       {{ t('meetup.back') }}
     </button>
@@ -250,17 +938,23 @@ onBeforeUnmount(() => {
     </button>
 
     <div v-if="edition" class="reglages">
-      <MeetupSettings v-model="mur" />
+      <MeetupSettings v-model="mur" v-model:overlay="overlay" :inicio="inicio" :claim="claim" />
     </div>
 
     <div class="haut">
       <div class="duo">
         <div class="ancre">
           <section class="copie">
-            <p class="marque">
+            <p class="marque" :aria-hidden="inicio ? true : undefined">
               <img src="/brand/grok-bot-wordmark.png" :alt="t('meetup.title')" />
             </p>
-            <p class="lieu">{{ sousTitre() }}</p>
+            <p
+              class="lieu"
+              :class="[inicio && 'lieu--reveal', inicio && pastille?.tipo === 'titulo' && 'lieu--on']"
+              :style="styleTitre()"
+              @contextmenu="auMenuTitre"
+            >{{ sousTitre() }}</p>
+            <p class="pronto" :style="stylePronto()" :aria-hidden="inicio ? undefined : true">{{ textePronto }}</p>
             <button
               ref="btnClaim"
               type="button"
@@ -275,12 +969,52 @@ onBeforeUnmount(() => {
         </div>
 
         <aside class="qr" :inert="!claim || undefined">
-          <ClaimQr v-if="mur.claimUrl" :url="mur.claimUrl" />
+          <form
+            v-if="!pase"
+            class="pase"
+            @submit.prevent="enviarCorreo"
+          >
+            <div class="pase-caja">
+              <label class="pase-etiqueta" for="correo-pase">{{ t('meetup.emailLabel') }}</label>
+              <input
+                id="correo-pase"
+                ref="inputCorreo"
+                v-model="correo"
+                type="text"
+                autocomplete="email"
+                inputmode="email"
+                pattern="[^\s@]+@[^\s@]+\.[^\s@]+"
+                spellcheck="false"
+                required
+                :placeholder="t('meetup.emailLabel')"
+                :disabled="enviando"
+                @focus="auFocusCaret"
+                @blur="auBlurCaret"
+                @keydown.enter.prevent="enviarCorreo"
+              />
+            </div>
+            <button
+              type="submit"
+              class="pase-accion"
+              :disabled="enviando"
+              :style="{ background: teintActuel, color: encrePase }"
+            >
+              {{ t('meetup.claim') }}
+            </button>
+            <p v-if="enviando" class="pase-estado">{{ t('meetup.emailSending') }}</p>
+            <p v-if="errorPase" class="pase-error" role="alert">{{ errorPase }}</p>
+          </form>
+          <div v-else class="pase-listo">
+            <ClaimQr :url="pase.qrUrl" />
+            <p class="pase-nombre">{{ t('meetup.emailReady') }}</p>
+            <p class="pase-quien">{{ pase.name }}</p>
+            <button type="button" @click="otroPase">{{ t('meetup.emailOther') }}</button>
+          </div>
         </aside>
 
       <div class="scene">
         <div
-          v-if="bulle && !claim"
+          v-if="bulle && !claim && !inicio"
           class="bulle"
           :class="bulle.phase === 'points' && 'bulle--points'"
         >
@@ -290,7 +1024,12 @@ onBeforeUnmount(() => {
           <p v-else class="bulle-texte">{{ welcome(t('meetup.welcome'), bulle.nom) }}</p>
         </div>
 
-        <div class="avatar" :class="claim && 'avatar--geant'" @click="auClicBot">
+        <div
+          class="avatar"
+          :class="[claim && 'avatar--geant', inicio && 'avatar--abajo']"
+          @click="auClicPrincipal"
+          @contextmenu.prevent="auClicSecondaire"
+        >
           <BloubBot
             v-model:state="state"
             v-model:block="block"
@@ -302,16 +1041,154 @@ onBeforeUnmount(() => {
             :expression="expression"
             :paper="PAPER"
             follow
+            :glance="overlay.mirada"
+            :aim-at="caretActif ? pointCaret : null"
           />
         </div>
       </div>
       </div>
     </div>
 
-    <footer class="presente">
-      <p class="presente-label">{{ t('meetup.presented') }}</p>
-      <img class="spacex" src="/brand/spacex-wordmark.png" alt="SpaceX" />
+    <footer
+      v-show="overlay.firmaVisible"
+      ref="pied"
+      class="presente"
+      :style="styleFirma()"
+    >
+      <div
+        class="firma-piece"
+        :class="pastille?.tipo === 'firma' && 'firma-piece--on'"
+        @pointerdown="auPointeurFirma"
+        @contextmenu.prevent="auMenuFirma"
+      >
+        <p class="presente-label">{{ texteFirma }}</p>
+        <img class="spacex" src="/brand/spacex-wordmark.png" alt="SpaceX" draggable="false" />
+        <span
+          v-if="pastille?.tipo === 'firma'"
+          class="poignee"
+          @pointerdown.stop="auPoigneeFirma"
+        />
+      </div>
     </footer>
+
+    <div
+      v-if="pastille"
+      class="pastille"
+      :class="pastille.tipo === 'principal' && 'pastille--grande'"
+      :style="{ left: `${pastille.x}px`, top: `${pastille.y}px` }"
+      @pointerdown="auPointeurPastille"
+    >
+      <p class="pastilla-titre">
+        {{
+          pastille.tipo === 'principal'
+            ? t('wall.mainBot')
+            : pastille.tipo === 'firma'
+              ? t('wall.presentedBlock')
+              : pastille.tipo === 'titulo'
+                ? t('wall.titleText')
+                : t('wall.fieldBots')
+        }}
+      </p>
+      <template v-if="pastille.tipo === 'principal'">
+        <div v-if="inicio" class="formas">
+          <BotTile
+            v-for="s in SHAPES"
+            :key="s.id"
+            :label="t(`shapes.${s.id}`)"
+            :selected="s.id === shape"
+            :shape="s.id"
+            :color="color"
+            :expression="expression"
+            :frozen-at="1"
+            :size="48"
+            @click="shape = s.id"
+          />
+          <button
+            type="button"
+            class="muestra"
+            :aria-label="t('panel.color')"
+            :aria-expanded="coloresAbiertos"
+            @click="basculerColores"
+          >
+            <!--
+              48 px : la meme boite que la vignette. Le disque et le crayon
+              tiennent dedans, donc « Color » tombe sur la meme ligne que les
+              noms de forme.
+            -->
+            <span class="muestra-marco">
+              <span class="muestra-disco" :style="{ background: teintActuel }" />
+              <svg class="muestra-lapiz" viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  fill="currentColor"
+                  d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a.996.996 0 0 0 0-1.41l-2.34-2.34a.996.996 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"
+                />
+              </svg>
+            </span>
+            <span class="muestra-nombre">{{ t('panel.color') }}</span>
+          </button>
+        </div>
+        <label>
+          {{ t('wall.scale') }}
+          <input v-model.number="overlay.escala" type="range" min="1" max="4" step="0.05" />
+        </label>
+        <label>
+          {{ t('wall.height') }}
+          <input v-model.number="overlay.altura" type="range" min="-12" max="24" step="0.5" />
+        </label>
+      </template>
+      <template v-else-if="pastille.tipo === 'titulo'">
+        <input
+          class="pastille-texte"
+          type="text"
+          v-model="brouillonTitre"
+          spellcheck="false"
+          autocomplete="off"
+          @input="poserTitre(brouillonTitre)"
+        />
+        <label>
+          {{ t('wall.textSize') }}
+          <input v-model.number="overlay.tituloTam" type="range" min="2" max="8" step="0.05" />
+        </label>
+      </template>
+      <template v-else-if="pastille.tipo === 'firma'">
+        <label>
+          {{ t('wall.textSize') }}
+          <input v-model.number="overlay.firmaTam" type="range" min="0.6" max="2" step="0.05" />
+        </label>
+      </template>
+      <template v-else>
+        <label>
+          {{ t('wall.textSize') }}
+          <input v-model.number="overlay.tamano" type="range" min="0.45" max="2.2" step="0.05" />
+        </label>
+        <label>
+          {{ t('wall.pace') }}
+          <input v-model.number="overlay.velocidad" type="range" min="0.3" max="3" step="0.1" />
+        </label>
+        <label>
+          {{ t('wall.availableBots') }}
+          <input v-model.number="overlay.cantidad" type="range" min="1" max="24" step="1" />
+        </label>
+      </template>
+    </div>
+
+    <div
+      v-if="coloresAbiertos && lugarColores"
+      class="teintes teintes--flotante"
+      :style="{ left: `${lugarColores.x}px`, top: `${lugarColores.y}px` }"
+      @pointerdown.stop
+    >
+      <button
+        v-for="c in COLORS"
+        :key="c.id"
+        type="button"
+        :aria-label="t(`colors.${c.id}`)"
+        :aria-pressed="c.id === color"
+        @click="choisirCouleur(c.id)"
+      >
+        <span :style="{ background: c.hex }" />
+      </button>
+    </div>
   </div>
 </template>
 
@@ -426,6 +1303,20 @@ onBeforeUnmount(() => {
   z-index: 4;
 }
 
+/*
+ * Le champ est derriere .haut. Sans ca, le clic sur un petit bot tombe sur
+ * la couche du texte et n'atteint jamais le grain.
+ */
+.mur--inicio .haut {
+  z-index: 1;
+  pointer-events: none;
+}
+
+.mur--inicio .copie,
+.mur--inicio .qr {
+  pointer-events: auto;
+}
+
 .haut {
   --copie-w: 20rem;
   --qr-w: min(58vh, 34vw);
@@ -473,10 +1364,7 @@ onBeforeUnmount(() => {
   /* Le duo reste aligne a gauche ; on le recentre comme un seul bloc sur le QR. */
   align-items: center;
   width: var(--copie-w);
-  transform: translate(
-    calc((var(--qr-w) - var(--copie-w)) / 2),
-    calc(3rem - 37vh)
-  );
+  transform: translate(calc((var(--qr-w) - var(--copie-w)) / 2), 0);
 }
 
 .qr {
@@ -496,7 +1384,7 @@ onBeforeUnmount(() => {
 
 .mur--claim .qr {
   opacity: 1;
-  transform: translate(0, calc(3rem - 37vh + 7.2rem)) scale(1);
+  transform: translate(0, 7.2rem) scale(1);
   pointer-events: auto;
 }
 
@@ -506,15 +1394,164 @@ onBeforeUnmount(() => {
   height: auto;
 }
 
+.mur--claim .qr {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.pase {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.75rem;
+  width: min(100%, 22rem);
+}
+
+.pase-caja {
+  display: flex;
+  align-items: center;
+  min-height: 3.25rem;
+  padding: 0 1.15rem;
+  background: #f2f2f4;
+  border-radius: 999px;
+}
+
+.pase-caja:focus-within {
+  background: #fff;
+  box-shadow: 0 0 0 2px #111;
+}
+
+.pase-etiqueta {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
+
+.pase-caja input {
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  border: 0;
+  background: transparent;
+  color: #111;
+  font: inherit;
+  font-size: 1.05rem;
+  letter-spacing: -0.01em;
+}
+
+.pase-caja input:focus {
+  outline: none;
+}
+
+.pase-caja input::placeholder {
+  color: #8a8a8a;
+}
+
+.pase-accion {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 3.25rem;
+  margin: 0;
+  padding: 0 1.15rem;
+  border: 0;
+  border-radius: 999px;
+  font: inherit;
+  font-size: 1rem;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+}
+
+.pase-accion:disabled {
+  cursor: default;
+}
+
+.pase-estado {
+  margin: 0.65rem 0 0;
+  font-size: 0.82rem;
+  color: #8a8a8a;
+}
+
+.pase-listo button {
+  align-self: flex-start;
+  margin-top: 0.95rem;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 0.95rem;
+  letter-spacing: -0.01em;
+  color: #111;
+  text-decoration: underline;
+  text-underline-offset: 0.22em;
+  cursor: pointer;
+}
+
+.pase-error {
+  margin: 0.65rem 0 0;
+  font-size: 0.82rem;
+  line-height: 1.35;
+  color: #8a1c1c;
+}
+
+.pase-listo {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+}
+
+.pase-nombre,
+.pase-quien {
+  margin: 0.75rem 0 0;
+  text-align: center;
+  font-size: 0.95rem;
+}
+
+.pase-quien {
+  margin-top: 0.2rem;
+  color: #8a8a8a;
+}
+
 .marque {
   margin: 0;
   width: 100%;
+  max-height: 8rem;
+  overflow: hidden;
+  transition:
+    opacity 0.35s ease-out,
+    max-height var(--bascule),
+    margin var(--bascule);
+}
+
+.mur--inicio .marque {
+  max-height: 0;
+  margin: 0;
+  opacity: 0;
+  pointer-events: none;
 }
 
 .marque img {
   display: block;
   width: 100%;
   height: auto;
+}
+
+/* Le png porte le bot a gauche (23 % de la largeur). On ne garde que le mot. */
+.mur--claim .marque {
+  width: 77%;
+  margin-inline: auto;
+  overflow: hidden;
+}
+
+.mur--claim .marque img {
+  width: calc(100% / 0.77);
+  max-width: none;
+  margin-left: calc(100% * -0.23 / 0.77);
 }
 
 .lieu {
@@ -528,31 +1565,93 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
-.mur--claim .lieu {
+.mur--claim .lieu,
+.mur--inicio .lieu {
   width: 100%;
   text-align: center;
 }
 
+.mur--inicio .lieu {
+  /* La colonne reste a 20rem, mais le mot a 76 px ne tient pas dedans : le
+     clip du reveal coupait alors la fin. La boite suit le texte, centree
+     sur la meme colonne. Sous 64rem la media query plafonne --titulo-tam. */
+  width: max-content;
+  max-width: none;
+  overflow: visible;
+  font-size: var(--titulo-tam, 4.75rem);
+}
+
+.mur--inicio .lieu--reveal {
+  animation: lieu-reveal 0.9s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.mur--inicio .lieu--on {
+  outline: 1.5px solid #2f6fed;
+  outline-offset: 6px;
+}
+
+@keyframes lieu-reveal {
+  from {
+    clip-path: inset(100% 0 0 0);
+  }
+  to {
+    clip-path: inset(0 0 0 0);
+  }
+}
+
+.pronto {
+  margin: 0;
+  max-height: 0;
+  overflow: hidden;
+  opacity: 0;
+  transform: translateY(0.75rem);
+  font-family: 'Universal Sans Display', 'Universal Sans Text', sans-serif;
+  font-size: clamp(1.45rem, 2.8vw, 2.25rem);
+  font-weight: 400;
+  letter-spacing: -0.03em;
+  line-height: 1.05;
+  text-align: center;
+  white-space: nowrap;
+  transition:
+    max-height var(--bascule),
+    margin var(--bascule),
+    opacity 0.45s ease-out 0.12s,
+    transform var(--bascule);
+}
+
+.mur--inicio .pronto {
+  margin-top: 0.9rem;
+  max-height: 4.5rem;
+  overflow: visible;
+  opacity: 1;
+  transform: translateY(0);
+  font-size: var(--pronto-tam, 2.25rem);
+}
+
 .claim {
-  display: inline-block;
-  margin: 0.85rem 0 0;
-  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin: 1.15rem 0 0;
+  padding: 0.42rem 1.05rem;
   border: 0;
-  background: none;
+  border-radius: 999px;
+  background: #111;
   font-family: 'Universal Sans Text', sans-serif;
   font-size: 0.92rem;
   font-weight: 400;
   letter-spacing: -0.01em;
-  color: #8a8a8a;
-  text-decoration: underline;
-  text-underline-offset: 0.22em;
-  text-decoration-thickness: 1px;
+  color: #fff;
+  text-decoration: none;
   cursor: pointer;
-  transition: opacity 0.35s ease-out;
+  transition:
+    opacity 0.35s ease-out,
+    background 0.2s ease-out,
+    transform 0.5s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .claim:hover {
-  color: var(--mur-ink);
+  background: #2a2a2a;
 }
 
 .mur--claim .claim {
@@ -563,6 +1662,12 @@ onBeforeUnmount(() => {
   overflow: hidden;
 }
 
+.mur--inicio .presente {
+  position: relative;
+  z-index: 5;
+  pointer-events: auto;
+}
+
 .presente {
   flex: 0 0 auto;
   display: flex;
@@ -571,37 +1676,297 @@ onBeforeUnmount(() => {
   justify-content: center;
   gap: 0.55rem;
   padding: 0.4rem 1.5rem 2.2rem;
+  font-size: calc(0.95rem * var(--firma-tam, 1));
+  transition: opacity 0.35s ease-out;
+}
+
+.firma-piece {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.55rem;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.firma-piece--on {
+  outline: 1.5px solid #2f6fed;
+  outline-offset: 8px;
+}
+
+.firma-piece:active {
+  cursor: grabbing;
+}
+
+.poignee {
+  position: absolute;
+  right: -14px;
+  bottom: -14px;
+  width: 11px;
+  height: 11px;
+  box-sizing: border-box;
+  background: #fff;
+  border: 1.5px solid #2f6fed;
+  cursor: nwse-resize;
+  touch-action: none;
 }
 
 .presente-label {
   margin: 0;
   font-family: 'Universal Sans Text', sans-serif;
-  font-size: 0.95rem;
+  font-size: 1em;
   font-weight: 400;
   letter-spacing: -0.01em;
-  color: #6b6b6b;
+  color: inherit;
 }
 
 .spacex {
   display: block;
-  width: clamp(9.5rem, 14vw, 12.5rem);
+  width: calc(11rem * var(--firma-tam, 1));
   height: auto;
+  filter: var(--firma-filtro, none);
 }
 
+.formas {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.2rem;
+  margin-top: 0.35rem;
+}
+
+.formas :deep(button) {
+  min-width: 0;
+  padding: 0.1rem;
+}
+
+.muestra {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  margin: 0;
+  padding: 0.1rem;
+  border: 2px solid transparent;
+  border-radius: 0.75rem;
+  background: none;
+  color: #8a8a8a;
+  font: inherit;
+  cursor: pointer;
+}
+
+.muestra[aria-expanded='true'] {
+  border-color: #111;
+}
+
+.muestra-marco {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  gap: 1px;
+}
+
+.muestra-disco {
+  width: 1.7rem;
+  height: 1.7rem;
+  flex: none;
+  border-radius: 999px;
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 14%);
+}
+
+.muestra-lapiz {
+  width: 15px;
+  height: 15px;
+  flex: none;
+  color: #111;
+}
+
+.muestra-nombre {
+  font-size: 0.75rem;
+  line-height: 1.25;
+  text-align: center;
+}
+
+.teintes {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 0.35rem;
+}
+
+.teintes--flotante {
+  position: fixed;
+  z-index: 8;
+  width: 12.4rem;
+  padding: 0.55rem;
+  background: #fff;
+  border-radius: 0.85rem;
+  box-shadow: 0 16px 40px rgb(0 0 0 / 20%);
+}
+
+.teintes button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 1;
+  margin: 0;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: none;
+  cursor: pointer;
+}
+
+.teintes button[aria-pressed='true'] {
+  border-color: #111;
+}
+
+.teintes span {
+  display: block;
+  width: 76%;
+  height: 76%;
+  border-radius: 999px;
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 12%);
+}
+
+.pastille {
+  position: fixed;
+  z-index: 6;
+  width: 14rem;
+  padding: 0.8rem 0.9rem 0.95rem;
+  background: #fff;
+  border-radius: 0.95rem;
+  box-shadow: 0 14px 36px rgb(0 0 0 / 16%);
+}
+
+.pastille--grande {
+  width: 16.5rem;
+}
+
+.pastilla-titre {
+  margin: 0 0 0.35rem;
+  font-family: 'Universal Sans Text', sans-serif;
+  font-size: 0.82rem;
+  font-weight: 550;
+}
+
+.pastille label {
+  display: grid;
+  gap: 0.2rem;
+  margin-top: 0.55rem;
+  font-size: 0.75rem;
+}
+
+.pastille input[type='range'] {
+  width: 100%;
+  margin: 0;
+  accent-color: var(--mur-ink);
+}
+
+.pastille-texte {
+  width: 100%;
+  margin: 0.45rem 0 0;
+  padding: 0.28rem 0 0.38rem;
+  border: 0;
+  border-bottom: 1px solid #d6d6d6;
+  border-radius: 0;
+  background: transparent;
+  color: #111;
+  font: inherit;
+  font-size: 0.95rem;
+  letter-spacing: -0.01em;
+}
+
+.pastille-texte:focus {
+  outline: none;
+  border-bottom-color: #111;
+}
+
+.tonos {
+  display: flex;
+  gap: 0.35rem;
+  margin-top: 0.55rem;
+}
+
+.tonos button {
+  flex: 1;
+  margin: 0;
+  padding: 0.35rem 0.4rem;
+  border: 0;
+  border-radius: 999px;
+  background: #f0f0f0;
+  font: inherit;
+  font-size: 0.75rem;
+  color: inherit;
+  cursor: pointer;
+}
+
+.tonos button[aria-pressed='true'] {
+  background: var(--mur-ink);
+  color: #fff;
+}
+
+/*
+ * `display` et la largeur sont explicites : `styles.css` pose une grille
+ * `.scene` a partir de 64rem pour l'editeur, et sans ca la boite du mur
+ * retrecit alors que la boule, elle, garde `--avatar-w`. Le recentrage de
+ * l'ouverture se calait alors a cote du milieu de la fenetre.
+ */
 .scene {
   position: relative;
+  display: block;
   flex: 0 0 auto;
+  width: var(--avatar-w);
 }
 
+/*
+ * La boite du bot est bien plus grande que la silhouette. Seul le corps
+ * peint recoit le clic ; le reste traverse jusqu'aux petits bots.
+ */
 .avatar {
   width: var(--avatar-w);
   transform: translate(0, 0) scale(1);
   transition: transform var(--bascule);
+  pointer-events: none;
+}
+
+.avatar :deep(svg),
+.avatar :deep(svg *) {
+  pointer-events: none;
+}
+
+.avatar :deep(.corps) {
+  pointer-events: visiblePainted;
   cursor: pointer;
 }
 
 .avatar--geant {
-  transform: translate(30vw, 14vh) scale(2.5);
+  transform: translate(30vw, 0) scale(2.5);
+}
+
+/*
+ * Pendant du claim, sur l'autre axe : le claim envoie la boule a droite, ici
+ * elle descend et grossit vers le bas pour laisser le texte en haut.
+ */
+.avatar--abajo {
+  transform-origin: center top;
+  transform: translate(calc((var(--copie-w) + var(--duo-gap)) / -2), calc(var(--bot-alto, 0) * -1vh)) scale(var(--bot-escala, 2.75));
+}
+
+.mur--inicio .copie {
+  align-items: center;
+  min-width: 0;
+  overflow: visible;
+  /* 1,75rem sous le calage d'origine. --texto-alto, comme l'altura du bot : positif monte. */
+  transform: translate(calc((var(--avatar-w) + var(--duo-gap)) / 2), calc(3rem - 28vh - var(--texto-alto, 0) * 1rem));
+}
+
+.mur--inicio .ancre {
+  min-width: 0;
+  overflow: visible;
 }
 
 .avatar :deep(svg) {
@@ -693,10 +2058,16 @@ onBeforeUnmount(() => {
   }
 
   .copie,
-  .mur--claim .copie {
+  .mur--claim .copie,
+  .mur--inicio .copie {
     transform: none;
-    width: min(100%, 18rem);
+    width: min(100%, 22rem);
     margin-inline: auto;
+  }
+
+  /* Meme descente que le bureau. Positif sur --texto-alto rapproche le titre du rail. */
+  .mur--inicio .copie {
+    margin-top: calc(1.75rem - var(--texto-alto, 0) * 1rem);
   }
 
   .ancre {
@@ -728,13 +2099,94 @@ onBeforeUnmount(() => {
     gap: 1.2rem;
   }
 
+  /*
+   * Le duo est le contenant positionne. Sans ca, le bot cale en absolu se
+   * mesurerait au bloc de texte et non a l'ecran.
+   */
+  .mur--inicio .duo {
+    position: static;
+  }
+
   .avatar--geant {
     transform: translate(8vw, 6vh) scale(1.45);
+  }
+
+  /*
+   * Bureau : les yeux tombent a 97dvh, sur le bord bas. Dans le flux, un
+   * decalage fixe les laissait plus haut des que le titre tenait sur une
+   * ligne. On sort la scene du flux et on place son haut pour que les yeux,
+   * a 44.8 % de la boite mise a l'echelle, retombent la. Le cercle peint
+   * commence a 18.4 % : le plancher le garde sous le texte quand l'ecran
+   * est trop court pour ce calage. L'altura monte toujours. L'echelle
+   * reste celle du grand cercle.
+   */
+  .mur--inicio .scene {
+    position: absolute;
+    left: 50%;
+    z-index: 0;
+    transform: translateX(-50%);
+    top: max(
+      calc(97dvh - 0.448 * var(--avatar-w) * var(--bot-escala, 2.75) * 2.4 / 2.75 - var(--bot-alto, 0) * 1vh),
+      calc(15rem - 0.184 * var(--avatar-w) * var(--bot-escala, 2.75) * 2.4 / 2.75)
+    );
+  }
+
+  .avatar--abajo {
+    transform: scale(calc(var(--bot-escala, 2.75) * 2.4 / 2.75));
+  }
+
+  /* 4.75rem (76 px) deborde a 375 px : on plafonne pour que la ligne tienne dans la colonne. */
+  .mur--inicio .lieu {
+    width: 100%;
+    max-width: 100%;
+    font-size: min(var(--titulo-tam, 4.75rem), clamp(1.85rem, 11.4vw, 2.85rem));
+    line-height: 1.05;
+    white-space: normal;
+    text-wrap: balance;
+  }
+
+  .pronto,
+  .mur--inicio .pronto {
+    white-space: normal;
+    font-size: min(var(--pronto-tam, 2.25rem), clamp(1.1rem, 5.8vw, 1.45rem));
   }
 
   .bulle {
     left: 4%;
     top: -4%;
+  }
+
+  /* Claim : la firma ne tient pas. Titre, bot et courrier forment un bloc centre. */
+  .mur--claim .presente {
+    display: none;
+  }
+
+  .mur--claim .haut {
+    justify-content: center;
+  }
+
+  .mur--claim .duo {
+    flex: 1;
+    align-self: stretch;
+    justify-content: center;
+    width: 100%;
+    min-height: 0;
+    gap: 0.85rem;
+  }
+
+  .mur--claim .scene {
+    order: 1;
+  }
+
+  .mur--claim .qr {
+    order: 2;
+    width: min(100%, 22rem);
+    margin-top: 0;
+    padding-bottom: 0;
+  }
+
+  .mur--claim .avatar--geant {
+    transform: none;
   }
 }
 
@@ -743,10 +2195,27 @@ onBeforeUnmount(() => {
   .mur--claim .qr,
   .copie,
   .mur--claim .copie,
+  .mur--inicio .copie,
   .avatar,
   .retour,
-  .mur--claim .retour {
+  .mur--claim .retour,
+  .mur--inicio .retour,
+  .pronto,
+  .mur--inicio .pronto,
+  .marque,
+  .mur--inicio .marque,
+  .presente,
+  .mur--inicio .presente,
+  .mur--inicio .lieu--reveal,
+  .pase-etiqueta,
+  .pase-accion,
+  .claim {
     transition: none;
+    animation: none;
+  }
+
+  .mur--inicio .lieu--reveal {
+    clip-path: none;
   }
 }
 </style>

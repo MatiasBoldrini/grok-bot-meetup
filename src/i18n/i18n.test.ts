@@ -73,11 +73,16 @@ describe('completude des dictionnaires', () => {
 
   it('traduit le chrome du mur', () => {
     expect(es.meetup.welcome).toBe('Bienvenido, {name}')
-    expect(es.meetup.cityClaim).toBe('Créditos del meetup')
+    expect(es.meetup.cityClaim).toBe('Meetup Mendoza')
     expect(en.meetup.city).toBe('Meetup {place}')
     expect(es.meetup.city).toBe('Meetup {place}')
     expect(es.meetup.claim).not.toBe(en.meetup.claim)
     expect(es.meetup.back).not.toBe(en.meetup.back)
+    expect(es.meetup.started).toBe('Ya comenzamos')
+    expect(es.meetup.soon).toBe('Comenzamos en breve')
+    expect(es.meetup.start).not.toBe(en.meetup.start)
+    expect(es.meetup.started).not.toBe(en.meetup.started)
+    expect(es.meetup.soon).not.toBe(en.meetup.soon)
     expect(es.wall.edit).not.toBe(en.wall.edit)
     expect(es.wall.place).not.toBe(en.wall.place)
     expect(es.wall.morph).not.toBe(en.wall.morph)

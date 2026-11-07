@@ -147,7 +147,7 @@ export default {
     presented: 'Presented by',
     city: 'Meetup {place}',
     cityBare: 'Meetup',
-    cityClaim: 'Crédits Grok Bot Meetup',
+    cityClaim: 'Meetup Mendoza',
     welcome: 'Bienvenue, {name}',
     claim: 'Récupérer les crédits',
     back: 'Retour',

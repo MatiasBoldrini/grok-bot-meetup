@@ -4,7 +4,7 @@ import { NOTIF_BLUE } from '@/bot/decor'
 import { BotEngine, type BotFrame } from '@/bot/engine'
 import { clamp, easings } from '@/bot/math'
 import { t } from '@/i18n'
-import { lookTarget, TURN_TIME, type GazeScript } from '@/ui/gaze'
+import { LOOK_LECTURE, lookTarget, miradaYaw, TURN_TIME, type GazeScript } from '@/ui/gaze'
 import {
   DEFAULT_EXPRESSION,
   EXPRESSION_BY_ID
@@ -50,6 +50,17 @@ const props = withDefaults(
      */
     follow?: boolean
     /**
+     * Point client qui remplace la souris. Tant qu'il est pose, les yeux visent
+     * ce point et le pointeur est ignore — le caret d'un champ au focus.
+     */
+    aimAt?: { x: number; y: number; nx?: number } | null
+    /**
+     * Coups d'oeil de cote, sur le meme modele que les clignements : le bot
+     * regarde seul a gauche puis a droite. Le pointeur reste la base. Pas
+     * pendant la lecture d'un champ (`aimAt`), ou le caret commande le lacet.
+     */
+    glance?: boolean
+    /**
      * Regard scripte de l'arrivee : evalue a chaque image avec le temps ecoule
      * depuis qu'il a ete pose. Independant de `follow`, qui vise le pointeur —
      * ici c'est le script qui decide de tout, y compris de sa duree.
@@ -65,6 +76,8 @@ const props = withDefaults(
     frozenAt: undefined,
     cycle: () => defaultCycle().blocks,
     follow: false,
+    aimAt: null,
+    glance: false,
     gaze: null
   }
 )
@@ -224,6 +237,10 @@ function release() {
  * cote pendant tout le mouvement. La normalisation se fait sur la demi-fenetre et
  * non sur la taille de l'avatar : le regard doit saturer quand le curseur atteint
  * le bord de l'ecran, quelle que soit la place que la boule occupe.
+ *
+ * `aimAt`, s'il est pose, prend la place du pointeur : meme repere, memes
+ * bornes. C'est le caret, et la souris ne compte plus tant que le champ a le
+ * focus.
  */
 function aim() {
   // Le regard ne se pilote que sur les etats a VISAGE DE REPOS. Ailleurs la pose
@@ -247,14 +264,22 @@ function aim() {
   if (!aiming) turnSince = clock
   const demiLargeur = Math.max(1, window.innerWidth / 2)
   const demiHauteur = Math.max(1, window.innerHeight / 2)
+  const point: { x: number; y: number; nx?: number } | null = props.aimAt ?? pointer
   engine.setLook(
     lookTarget({
-      nx: pointer ? clamp((pointer.x - (box.left + box.width / 2)) / demiLargeur, -1, 1) : 0,
-      ny: pointer ? clamp((pointer.y - (box.top + box.height / 2)) / demiHauteur, -1, 1) : 0,
+      // `nx` pose par l'appelant (avance dans le champ) prime sur la demi-fenetre
+      nx: point
+        ? (point.nx ?? clamp((point.x - (box.left + box.width / 2)) / demiLargeur, -1, 1))
+        : 0,
+      ny: point ? clamp((point.y - (box.top + box.height / 2)) / demiHauteur, -1, 1) : 0,
       tour: easings.easeOutQuint(clamp((clock - turnSince) / TURN_TIME)),
-      pointer: pointer !== null
+      pointer: point !== null,
+      // le caret : les lettres restent sur x, le regard se pose plus bas
+      lire: props.aimAt != null,
+      mirada: props.glance && props.aimAt == null ? miradaYaw(clock) : 0
     }),
-    clock
+    clock,
+    props.aimAt != null ? LOOK_LECTURE : undefined
   )
   aiming = true
 }
@@ -579,7 +604,7 @@ function dotAttrs(dot: BotFrame['dots'][number]) {
         laissaient voir jusqu'ici, le fond de la page. Les mettre en blanc les
         rendrait plus clairs que le fond, ce qui se verrait sur une grande boule.
       -->
-      <path :d="frame.bodyPath" :fill="props.paper" />
+      <path class="corps" :d="frame.bodyPath" :fill="props.paper" />
       <g :mask="`url(#${maskId})`">
         <rect :x="-VB" :y="-VB" :width="VB * 2" :height="VB * 2" :fill="ink" />
       </g>

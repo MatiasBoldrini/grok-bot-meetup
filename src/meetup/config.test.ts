@@ -19,7 +19,8 @@ describe('meetup config', () => {
     expect(DEFAULT_CONFIG).toEqual({
       place: 'Mendoza',
       claimUrl: 'https://cursor.com/redeem/event/grok-bot-meetup-mendoza-stripe-oysmd4-9xxteg',
-      morphSeconds: 10
+      morphSeconds: 10,
+      claimTitle: ''
     })
     expect(defaults()).not.toBe(DEFAULT_CONFIG)
   })
@@ -33,7 +34,8 @@ describe('meetup config', () => {
     expect(parsed).toEqual({
       place: 'Berlin',
       claimUrl: 'https://cursor.com/redeem',
-      morphSeconds: 10
+      morphSeconds: 10,
+      claimTitle: ''
     })
   })
 
@@ -47,11 +49,12 @@ describe('meetup config', () => {
 
   it('reads and writes under the shared storage prefix', () => {
     const store = memory()
-    writeConfig({ place: 'Lisbon', claimUrl: '', morphSeconds: 10 })
+    writeConfig({ place: 'Lisbon', claimUrl: '', morphSeconds: 10, claimTitle: 'Meetup Lisboa' })
     expect(store.get('bloub:meetup')).toContain('Lisbon')
     expect(readConfig().place).toBe('Lisbon')
     expect(readConfig().claimUrl).toBe(DEFAULT_CONFIG.claimUrl)
     expect(readConfig().morphSeconds).toBe(10)
+    expect(readConfig().claimTitle).toBe('Meetup Lisboa')
   })
 
   it('fills empty stored fields with the Mendoza base', () => {

@@ -2,6 +2,9 @@
   "rewrites": [
     { "source": "/wall/state", "destination": "/api/wall/state" },
     { "source": "/wall/health", "destination": "/api/wall/health" },
+    { "source": "/wall/check-in", "destination": "/api/wall/check-in" },
+    { "source": "/wall/events", "destination": "/api/wall/events" },
+    { "source": "/wall/ticket-types", "destination": "/api/wall/ticket-types" },
     { "source": "/webhooks/luma", "destination": "/api/webhooks/luma" },
     { "source": "/:path*", "destination": "/index.html" }
   ]

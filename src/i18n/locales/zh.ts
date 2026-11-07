@@ -125,7 +125,7 @@ const zh: typeof fr = {
     presented: 'Presented by',
     city: 'Meetup {place}',
     cityBare: 'Meetup',
-    cityClaim: 'Grok Bot Meetup 积分',
+    cityClaim: 'Meetup Mendoza',
     welcome: '欢迎，{name}',
     claim: '领取积分',
     back: '返回',

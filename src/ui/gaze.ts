@@ -1,6 +1,6 @@
 import type { Look } from '@/bot/engine'
 import type { ExpressionId } from '@/bot/expressions'
-import { clamp, easings } from '@/bot/math'
+import { clamp, createRng, easings } from '@/bot/math'
 
 /**
  * Ou le bot regarde quand il suit le curseur. Pur, comme `src/ui/timeline.ts` :
@@ -28,6 +28,26 @@ export const PITCH_MAX = 13
  * au premier changement d'humeur.
  */
 export const PITCH = 10
+
+/**
+ * Tangage quand le bot lit un champ. `ny = 1` ne donne que `PITCH - PITCH_MAX`,
+ * a peine sous l'equateur, et le caret tombe souvent pres du centre : on pose
+ * donc le regard plus bas, pour que la lecture se voie. Pas jusqu'au limbe :
+ * a -55 les yeux etaient a 0,79 rayon. Ici ils restent dans le bas du visage,
+ * vers la ligne du champ. Le lacet suit les lettres. CHOISI, pas releve.
+ */
+export const PITCH_LECTURE = -22
+
+/**
+ * Amplitude du lacet quand on lit un champ, et rattrapage plus court. Pour la
+ * souris, 16deg sur une demi-fenetre suffisent ; pour des lettres, le caret ne
+ * parcourt que la largeur du champ, et a 16deg l'avance de la frappe se voyait
+ * a peine. Ici le champ ENTIER vaut tout le debattement, et les yeux le
+ * rattrapent en 0,12 s au lieu de 0,24 : ils doivent arriver avec la lettre.
+ * CHOISIS, pas releves. Le test de visibilite en lecture couvre le bord.
+ */
+export const YAW_LECTURE = 34
+export const LOOK_LECTURE = 0.12
 
 /**
  * Direction ou la tete se pose dans la vue des reglages : le bot cesse de regarder en haut a
@@ -141,6 +161,17 @@ export interface Aim {
   tour: number
   /** false = aucun pointeur connu : la tete reste tournee, mais elle revit */
   pointer: boolean
+  /**
+   * true = on lit un champ. Le tangage se pose en bas (`PITCH_LECTURE`) et le
+   * lacet suit le caret. `ny` est alors ignore.
+   */
+  lire?: boolean
+  /**
+   * Lacet ajoute, en degres, pour un regard de cote. 0 = rien. Le suivi du
+   * pointeur reste la base : ceci s'y ajoute, comme un clignement s'ajoute a
+   * l'oeil ouvert.
+   */
+  mirada?: number
 }
 
 /**
@@ -155,11 +186,11 @@ export interface Aim {
  * lire le lacet d'ARRIVEE de l'expression pendant que le moteur, lui, morphe
  * encore — et les yeux sautaient a chaque changement d'humeur.
  */
-export function lookTarget({ nx, ny, tour, pointer }: Aim): Look {
+export function lookTarget({ nx, ny, tour, pointer, lire, mirada = 0 }: Aim): Look {
   return {
-    yaw: -TURN + nx * YAW_MAX,
+    yaw: -TURN + nx * (lire ? YAW_LECTURE : YAW_MAX) + mirada,
     // tangage positif = regard vers le haut, alors que le y de l'ecran descend
-    pitch: PITCH - ny * PITCH_MAX,
+    pitch: lire ? PITCH_LECTURE : PITCH - ny * PITCH_MAX,
     mix: tour,
     spin: SPIN * (1 - tour),
     // Sans pointeur la tete reste tournee vers le panneau, mais on lui rend sa
@@ -167,4 +198,50 @@ export function lookTarget({ nx, ny, tour, pointer }: Aim): Look {
     // tactile donnait un avatar completement immobile.
     wander: pointer ? 0 : 1
   }
+}
+
+/**
+ * Amplitude d'un regard lance de lui-meme, en degres. CHOISIE, pas relevee :
+ * assez large pour se lire comme un coup d'oeil, en dessous de la marge qui
+ * garde les deux yeux devant le limbe quand le pointeur est deja au bord.
+ */
+export const MIRADA = 13
+
+/** Duree d'un coup d'oeil : partir, tenir, revenir. Plus lent qu'un clignement. */
+const MIRADA_DUR = 0.92
+
+const MIRADA_RNG = createRng(0xc0de)
+/**
+ * Calendrier pre-tire, meme forme que les clignements : deterministe, sans
+ * etat, et pas verrouille sur leur rythme.
+ */
+const MIRADAS: { t: number; cote: 1 | -1 }[] = (() => {
+  const out: { t: number; cote: 1 | -1 }[] = []
+  let t = 1.7
+  let cote: 1 | -1 = 1
+  while (t < 900) {
+    out.push({ t, cote })
+    cote = cote === 1 ? -1 : 1
+    t += 2.6 + MIRADA_RNG() * 2.4
+  }
+  return out
+})()
+
+/**
+ * Lacet d'un coup d'oeil au temps `t`, en degres. 0 presque tout le temps :
+ * le bot regarde d'un cote, tient, et revient. Les cotes alternent.
+ */
+export function miradaYaw(t: number): number {
+  for (let i = 0; i < MIRADAS.length; i++) {
+    const g = MIRADAS[i]!
+    if (t < g.t) break
+    const k = (t - g.t) / MIRADA_DUR
+    if (k < 0 || k > 1) continue
+    let a: number
+    if (k < 0.34) a = easings.easeOutCubic(k / 0.34)
+    else if (k < 0.56) a = 1
+    else a = 1 - easings.easeOutCubic((k - 0.56) / 0.44)
+    return g.cote * MIRADA * a
+  }
+  return 0
 }

@@ -2,13 +2,15 @@ import { interpoler } from '@/i18n/format'
 import { ecris, lis } from '@/ui/stockage'
 
 /**
- * Only what changes per venue: city, credits QR, morph interval.
+ * Only what changes per venue: city, credits QR, morph interval, claim line.
  * Every other label comes from the language pack.
  */
 export type MeetupConfig = {
   place: string
   claimUrl: string
   morphSeconds: number
+  /** Vide : la ligne du claim retombe sur meetup.cityClaim. */
+  claimTitle: string
 }
 
 export const DEFAULT_MORPH_SECONDS = 10
@@ -16,7 +18,8 @@ export const DEFAULT_MORPH_SECONDS = 10
 export const DEFAULT_CONFIG: MeetupConfig = {
   place: 'Mendoza',
   claimUrl: 'https://cursor.com/redeem/event/grok-bot-meetup-mendoza-stripe-oysmd4-9xxteg',
-  morphSeconds: DEFAULT_MORPH_SECONDS
+  morphSeconds: DEFAULT_MORPH_SECONDS,
+  claimTitle: ''
 }
 
 export function defaults(): MeetupConfig {
@@ -52,6 +55,7 @@ export function mergeConfig(value: unknown): MeetupConfig {
   const record = value as Record<string, unknown>
   if (typeof record.place === 'string' && record.place.trim()) next.place = record.place
   if (typeof record.claimUrl === 'string' && record.claimUrl.trim()) next.claimUrl = record.claimUrl
+  if (typeof record.claimTitle === 'string') next.claimTitle = record.claimTitle
   if (record.morphSeconds != null && record.morphSeconds !== '') {
     const n = typeof record.morphSeconds === 'number' ? record.morphSeconds : Number(record.morphSeconds)
     if (Number.isFinite(n) && n >= 1) next.morphSeconds = clampMorphSeconds(n)
@@ -80,6 +84,7 @@ function sanitize(config: MeetupConfig): MeetupConfig {
   return {
     place: String(config.place ?? ''),
     claimUrl: String(config.claimUrl ?? ''),
-    morphSeconds: clampMorphSeconds(config.morphSeconds)
+    morphSeconds: clampMorphSeconds(config.morphSeconds),
+    claimTitle: String(config.claimTitle ?? '')
   }
 }

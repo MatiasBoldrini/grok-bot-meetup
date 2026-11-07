@@ -2,12 +2,43 @@
 import ClaimQr from '@/components/ClaimQr.vue'
 import { LANGUES, langue, t } from '@/i18n'
 import type { MeetupConfig } from '@/meetup/config'
+import type { OverlayReglage } from '@/meetup/overlay'
 
 const REPO = 'https://github.com/MatiasBoldrini/grok-bot-meetup'
 
-const config = defineModel<MeetupConfig>({ required: true })
+type ClaveNumero = 'escala' | 'altura' | 'textoY' | 'velocidad'
 
-function setField(key: 'place' | 'claimUrl', value: string) {
+const config = defineModel<MeetupConfig>({ required: true })
+const overlay = defineModel<OverlayReglage>('overlay', { required: true })
+
+defineProps<{ inicio: boolean; claim: boolean }>()
+
+const CURSEURS = [
+  ['escala', 'wall.scale', 1, 4, 0.05],
+  ['altura', 'wall.height', -12, 24, 0.5],
+  ['textoY', 'wall.textHeight', -10, 8, 0.25],
+  ['velocidad', 'wall.speed', 0.3, 3, 0.1]
+] as const
+
+function setCurseur(key: ClaveNumero, value: string) {
+  const n = Number(value)
+  if (!Number.isFinite(n)) return
+  overlay.value = { ...overlay.value, [key]: n }
+}
+
+function basculerFirma() {
+  overlay.value = { ...overlay.value, firmaVisible: !overlay.value.firmaVisible }
+}
+
+function basculerMirada() {
+  overlay.value = { ...overlay.value, mirada: !overlay.value.mirada }
+}
+
+function formatCurseur(n: number) {
+  return Number.isInteger(n) ? String(n) : n.toFixed(2).replace(/0$/, '').replace(/\.0$/, '')
+}
+
+function setField(key: 'place' | 'claimUrl' | 'claimTitle', value: string) {
   config.value = { ...config.value, [key]: value }
 }
 
@@ -52,69 +83,129 @@ function auClavier(event: KeyboardEvent, index: number) {
       </button>
     </div>
 
-    <label class="champ">
-      <span>{{ t('wall.place') }}</span>
-      <input
-        :value="config.place"
-        type="text"
-        autocomplete="off"
-        spellcheck="false"
-        @input="setField('place', ($event.target as HTMLInputElement).value)"
-      />
-    </label>
+    <template v-if="inicio">
+        <label v-for="c in CURSEURS" :key="c[0]" class="regle">
+          <span>
+            {{ t(c[1]) }}
+            <b>{{ formatCurseur(overlay[c[0]]) }}</b>
+          </span>
+          <input
+            type="range"
+            :min="c[2]"
+            :max="c[3]"
+            :step="c[4]"
+            :value="overlay[c[0]]"
+            @input="setCurseur(c[0], ($event.target as HTMLInputElement).value)"
+          />
+        </label>
+        <label class="firma-oculto mirada">
+          <input type="checkbox" :checked="overlay.mirada" @change="basculerMirada" />
+          <span>{{ t('wall.glance') }}</span>
+        </label>
+        <section class="firma">
+          <p class="firma-titre">{{ t('wall.presentedBlock') }}</p>
+          <label class="firma-oculto">
+            <input type="checkbox" :checked="!overlay.firmaVisible" @change="basculerFirma" />
+            <span>{{ t('wall.hidden') }}</span>
+          </label>
+        </section>
+    </template>
 
-    <label class="champ champ--morph">
-      <span>{{ t('wall.morph') }}</span>
-      <span class="morph">
+    <template v-else-if="claim">
+      <label class="champ">
+        <span>{{ t('wall.claimTitle') }}</span>
         <input
-          :value="config.morphSeconds"
-          type="number"
-          min="1"
-          max="120"
-          step="1"
-          inputmode="numeric"
-          @input="setMorph(($event.target as HTMLInputElement).value)"
+          :value="config.claimTitle"
+          type="text"
+          autocomplete="off"
+          spellcheck="false"
+          :placeholder="t('meetup.cityClaim')"
+          @input="setField('claimTitle', ($event.target as HTMLInputElement).value)"
         />
-        <span>{{ t('wall.morphUnit') }}</span>
-      </span>
-    </label>
-
-    <label class="champ">
-      <span>{{ t('wall.claimUrl') }}</span>
-      <input
-        :value="config.claimUrl"
-        type="url"
-        autocomplete="off"
-        spellcheck="false"
-        @input="setField('claimUrl', ($event.target as HTMLInputElement).value)"
-      />
-    </label>
-    <div class="qr">
-      <ClaimQr v-if="config.claimUrl" :url="config.claimUrl" />
-      <p v-else>{{ t('wall.qrEmpty') }}</p>
-    </div>
-
-    <a
-      class="repo"
-      :href="REPO"
-      target="_blank"
-      rel="noopener noreferrer"
-      :aria-label="t('wall.repoAria')"
-    >
-      <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
-        <path
-          d="M8 .5a7.5 7.5 0 0 0-2.37 14.62c.37.07.5-.16.5-.36v-1.3c-2.09.46-2.53-.99-2.53-.99-.34-.87-.83-1.1-.83-1.1-.68-.47.05-.46.05-.46.75.06 1.15.78 1.15.78.67 1.15 1.76.82 2.19.63.07-.49.26-.83.48-1.02-1.67-.19-3.42-.83-3.42-3.72 0-.82.29-1.5.78-2.02-.08-.19-.34-.96.07-1.99 0 0 .63-.2 2.06.77a7.1 7.1 0 0 1 3.75 0c1.43-.97 2.06-.77 2.06-.77.41 1.03.15 1.8.07 1.99.49.52.78 1.2.78 2.02 0 2.9-1.76 3.53-3.44 3.71.27.23.51.69.51 1.39v2.06c0 .2.13.44.51.36A7.5 7.5 0 0 0 8 .5z"
-          fill="currentColor"
+      </label>
+      <label class="champ">
+        <span>{{ t('wall.claimUrl') }}</span>
+        <input
+          :value="config.claimUrl"
+          type="url"
+          autocomplete="off"
+          spellcheck="false"
+          @input="setField('claimUrl', ($event.target as HTMLInputElement).value)"
         />
-      </svg>
-      {{ t('wall.repo') }}
-    </a>
+      </label>
+      <div class="qr">
+        <ClaimQr v-if="config.claimUrl" :url="config.claimUrl" />
+        <p v-else>{{ t('wall.qrEmpty') }}</p>
+      </div>
+    </template>
+
+    <template v-else>
+      <label class="champ">
+        <span>{{ t('wall.place') }}</span>
+        <input
+          :value="config.place"
+          type="text"
+          autocomplete="off"
+          spellcheck="false"
+          @input="setField('place', ($event.target as HTMLInputElement).value)"
+        />
+      </label>
+
+      <label class="champ champ--morph">
+        <span>{{ t('wall.morph') }}</span>
+        <span class="morph">
+          <input
+            :value="config.morphSeconds"
+            type="number"
+            min="1"
+            max="120"
+            step="1"
+            inputmode="numeric"
+            @input="setMorph(($event.target as HTMLInputElement).value)"
+          />
+          <span>{{ t('wall.morphUnit') }}</span>
+        </span>
+      </label>
+
+      <label class="champ">
+        <span>{{ t('wall.claimUrl') }}</span>
+        <input
+          :value="config.claimUrl"
+          type="url"
+          autocomplete="off"
+          spellcheck="false"
+          @input="setField('claimUrl', ($event.target as HTMLInputElement).value)"
+        />
+      </label>
+      <div class="qr">
+        <ClaimQr v-if="config.claimUrl" :url="config.claimUrl" />
+        <p v-else>{{ t('wall.qrEmpty') }}</p>
+      </div>
+
+      <a
+        class="repo"
+        :href="REPO"
+        target="_blank"
+        rel="noopener noreferrer"
+        :aria-label="t('wall.repoAria')"
+      >
+        <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+          <path
+            d="M8 .5a7.5 7.5 0 0 0-2.37 14.62c.37.07.5-.16.5-.36v-1.3c-2.09.46-2.53-.99-2.53-.99-.34-.87-.83-1.1-.83-1.1-.68-.47.05-.46.05-.46.75.06 1.15.78 1.15.78.67 1.15 1.76.82 2.19.63.07-.49.26-.83.48-1.02-1.67-.19-3.42-.83-3.42-3.72 0-.82.29-1.5.78-2.02-.08-.19-.34-.96.07-1.99 0 0 .63-.2 2.06.77a7.1 7.1 0 0 1 3.75 0c1.43-.97 2.06-.77 2.06-.77.41 1.03.15 1.8.07 1.99.49.52.78 1.2.78 2.02 0 2.9-1.76 3.53-3.44 3.71.27.23.51.69.51 1.39v2.06c0 .2.13.44.51.36A7.5 7.5 0 0 0 8 .5z"
+            fill="currentColor"
+          />
+        </svg>
+        {{ t('wall.repo') }}
+      </a>
+    </template>
   </div>
 </template>
 
 <style scoped>
 .fiche {
   width: min(16.5rem, calc(100vw - 2.4rem));
+  max-height: calc(100dvh - 5.2rem);
+  overflow: auto;
   padding: 1.05rem 1.15rem 1rem;
   background: #fff;
   border-radius: 0.95rem;
@@ -213,6 +304,128 @@ function auClavier(event: KeyboardEvent, index: number) {
   font-size: 0.78rem;
   line-height: 1.35;
   color: #8a8a8a;
+}
+
+.overlay--solo {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
+.bloque {
+  margin-top: 1.1rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid #ececec;
+}
+
+.color {
+  width: 2.4rem;
+  height: 1.6rem;
+  margin-top: 0.25rem;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+
+.overlay {
+  margin-top: 1.15rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid #ececec;
+}
+
+.overlay-titre {
+  margin: 0 0 0.55rem;
+  font-size: 0.78rem;
+  letter-spacing: -0.01em;
+  color: #8a8a8a;
+}
+
+.firma {
+  margin-top: 1.15rem;
+  padding-top: 1rem;
+  border-top: 1px solid #ececec;
+}
+
+.firma-oculto {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.92rem;
+  cursor: pointer;
+}
+
+.mirada {
+  margin-top: 1.05rem;
+}
+
+.firma-titre {
+  margin: 0 0 0.55rem;
+  font-size: 0.78rem;
+  letter-spacing: -0.01em;
+  color: #8a8a8a;
+}
+
+.segmento {
+  display: flex;
+  gap: 0.2rem;
+  padding: 0.18rem;
+  border-radius: 999px;
+  background: #f0f0f0;
+}
+
+.segmento label {
+  position: relative;
+  flex: 1;
+  margin: 0;
+}
+
+.segmento input {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.segmento span {
+  display: block;
+  padding: 0.32rem 0.2rem;
+  border-radius: 999px;
+  font-size: 0.82rem;
+  text-align: center;
+  color: #8a8a8a;
+}
+
+.segmento input:checked + span {
+  background: #fff;
+  color: #111;
+}
+
+.segmento input:focus-visible + span {
+  outline: 1px solid #111;
+  outline-offset: 1px;
+}
+
+.regle {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  margin-top: 0.75rem;
+  font-size: 0.78rem;
+  letter-spacing: -0.01em;
+  color: #8a8a8a;
+}
+
+.regle b {
+  color: #111;
+  font-weight: 550;
+}
+
+.regle input[type='range'] {
+  width: 100%;
+  margin: 0;
+  accent-color: #111;
 }
 
 .repo {

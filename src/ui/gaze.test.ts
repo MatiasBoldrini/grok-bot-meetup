@@ -6,11 +6,15 @@ import { STATE_BY_ID } from '@/bot/states'
 import {
   HUMEURS,
   lookTarget,
+  MIRADA,
+  miradaYaw,
   PITCH,
+  PITCH_LECTURE,
   SPIN,
   TOUR_TIME,
   tourLook,
   TURN,
+  YAW_LECTURE,
   YAW_MAX,
   type Aim
 } from './gaze'
@@ -53,9 +57,50 @@ describe('cible de regard', () => {
     expect(lookTarget(vise({ ny: 1 })).pitch).toBeLessThan(0)
   })
 
+  it('lit un champ plus bas que le bord de l ecran, et le lacet suit quand meme', () => {
+    const souris = lookTarget(vise({ ny: 1, nx: 0.4 }))
+    const champ = lookTarget(vise({ ny: 0, nx: 0.4, lire: true }))
+    expect(champ.pitch).toBe(PITCH_LECTURE)
+    expect(champ.pitch).toBeLessThan(souris.pitch)
+    // le lacet suit toujours, mais avec le debattement de lecture : plus ample
+    expect(champ.yaw).toBe(-TURN + 0.4 * YAW_LECTURE)
+    expect(YAW_LECTURE).toBeGreaterThan(YAW_MAX)
+    const bord = lookTarget(vise({ nx: 1, lire: true })).yaw - lookTarget(vise({ nx: -1, lire: true })).yaw
+    expect(bord).toBe(2 * YAW_LECTURE)
+  })
+
   it('fond le tour a mesure que l arrivee se fait', () => {
     expect(lookTarget(vise({ tour: 0.5 })).spin).toBe(SPIN / 2)
     expect(lookTarget(vise({ tour: 1 })).spin).toBe(0)
+  })
+
+  it('ajoute le coup d oeil au lacet, sans y toucher quand il vaut zero', () => {
+    expect(lookTarget(vise()).yaw).toBe(-TURN)
+    expect(lookTarget(vise({ mirada: MIRADA })).yaw).toBe(-TURN + MIRADA)
+  })
+})
+
+describe('coup d oeil autonome', () => {
+  it('reste au repos, puis regarde un cote et l autre', () => {
+    expect(miradaYaw(0)).toBe(0)
+    const pics: number[] = []
+    for (let t = 0; t < 24; t += 0.02) {
+      const y = miradaYaw(t)
+      expect(Math.abs(y)).toBeLessThanOrEqual(MIRADA + 1e-6)
+      if (Math.abs(y) > MIRADA - 0.05) pics.push(Math.sign(y))
+    }
+    expect(pics.some((s) => s > 0)).toBe(true)
+    expect(pics.some((s) => s < 0)).toBe(true)
+  })
+
+  it('revient a zero entre deux coups d oeil', () => {
+    let vu = false
+    let repos = false
+    for (let t = 0; t < 16 && !repos; t += 0.02) {
+      if (Math.abs(miradaYaw(t)) > 1) vu = true
+      else if (vu) repos = true
+    }
+    expect(repos).toBe(true)
   })
 })
 
@@ -77,6 +122,36 @@ describe('les deux yeux restent visibles', () => {
           // ...et pas seulement presents : encore franchement opaques
           for (const oeil of image.eyes) {
             expect(oeil.alpha, `${e.id} nx=${nx} ny=${ny}`).toBeGreaterThan(0.5)
+          }
+        }
+      }
+    }
+  })
+
+  it('reste visible quand il lit, plus bas que le bord de l ecran', () => {
+    for (const e of EXPRESSIONS) {
+      for (const nx of [-1, 0, 1]) {
+        const moteur = new BotEngine(100, 'idle', cercle(), EXPRESSION_BY_ID.get(e.id)!)
+        moteur.setLook(lookTarget(vise({ nx, lire: true })), 0)
+        const image = moteur.sample(1)
+        expect(image.eyes, `${e.id} nx=${nx}`).toHaveLength(2)
+        for (const oeil of image.eyes) {
+          expect(oeil.alpha, `${e.id} nx=${nx}`).toBeGreaterThan(0.5)
+        }
+      }
+    }
+  })
+
+  it('reste visible au bord de l ecran pendant un coup d oeil', () => {
+    for (const e of EXPRESSIONS) {
+      for (const nx of [-1, 1]) {
+        for (const mirada of [-MIRADA, MIRADA]) {
+          const moteur = new BotEngine(100, 'idle', cercle(), EXPRESSION_BY_ID.get(e.id)!)
+          moteur.setLook(lookTarget(vise({ nx, mirada })), 0)
+          const image = moteur.sample(1)
+          expect(image.eyes, `${e.id} nx=${nx} mirada=${mirada}`).toHaveLength(2)
+          for (const oeil of image.eyes) {
+            expect(oeil.alpha, `${e.id} nx=${nx}`).toBeGreaterThan(0.5)
           }
         }
       }
