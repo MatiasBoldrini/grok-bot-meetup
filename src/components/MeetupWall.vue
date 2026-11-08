@@ -755,102 +755,142 @@ function auClavier(e: KeyboardEvent) {
 }
 
 /**
- * Le bouton qui se derobe, comme on le fait d'habitude : un seul translate,
- * ease par la transition CSS, pas une boucle qui le projette. Quand le
- * pointeur arrive tout contre, il glisse de `FUITE_PASO` dans la direction
- * OPPOSEE au pointeur — sur les deux axes, pas seulement x — et il reste la.
- * Le chemin parcouru s'ADDITIONNE : `FUITE_TOTAL` au total, puis il ne bouge
- * plus jamais et on peut l'attraper. Un rayon autour de la place d'origine ne
- * suffisait pas : au bord du cercle, un curseur arrive de cote et le fait
- * glisser le long du bord sans fin. `FUITE_PAUSA` evite qu'un second
- * evenement, tire pendant le glissement, ajoute un deuxieme pas.
- * Le tactile n'a pas de survol, et `prefers-reduced-motion` le laisse fixe.
+ * Le bouton que le curseur repousse, comme un aimant de meme polarite : une
+ * force CONTINUE, pas un saut par approche. Plus le pointeur est pres du bord
+ * du bouton, plus la vitesse visee est forte (`FUITE_VMAX` au contact, nulle a
+ * `FUITE_ALCANCE`), dans la direction opposee, sur les deux axes. La vitesse
+ * est lissee puis integree a chaque image : il demarre et s'arrete en douceur,
+ * et un curseur plus rapide que `FUITE_VMAX` le rattrape.
+ *
+ * Le chemin qu'il peut parcourir est un BUDGET (`FUITE_TOTAL`, additionne) :
+ * epuise, il ne bouge plus jamais. Un rayon autour de la place d'origine ne
+ * suffisait pas, le curseur le faisait glisser le long du bord sans fin. La
+ * fenetre le borne aussi, il ne sort jamais de l'ecran, et coince contre un
+ * bord on l'attrape. Il ne revient pas de lui-meme.
+ *
+ * Pas de transition CSS sur le transform : elle ajouterait son propre retard
+ * a une vitesse deja lissee. La boucle ne tourne que tant que quelque chose
+ * bouge. Le tactile n'a pas de survol et `prefers-reduced-motion` le laisse fixe.
  */
-const FUITE_PASO = 110
-const FUITE_TOTAL = 220
-const FUITE_CERCA = 14
-const FUITE_PAUSA = 380
-const FUITE_MINIMO = 24
+const FUITE_ALCANCE = 120
+const FUITE_VMAX = 560
+const FUITE_SUAVIDAD = 9
+const FUITE_TOTAL = 510
 const fuite = { x: 0, y: 0 }
-let fuiteDesde = 0
+const fuiteVel = { x: 0, y: 0 }
+let fuitePointeur: { x: number; y: number } | null = null
 let fuiteRecorrido = 0
+let fuiteRaf = 0
+let fuiteHorloge = 0
 
 function poserFuite(el: HTMLElement | null) {
   if (!el) return
   el.style.transform =
-    Math.abs(fuite.x) > 0.4 || Math.abs(fuite.y) > 0.4
-      ? `translate(${fuite.x.toFixed(1)}px, ${fuite.y.toFixed(1)}px)`
+    Math.abs(fuite.x) > 0.2 || Math.abs(fuite.y) > 0.2
+      ? `translate(${fuite.x.toFixed(2)}px, ${fuite.y.toFixed(2)}px)`
       : ''
 }
 
-/** Translation reellement appliquee en ce moment, glissement en cours compris. */
-function fuiteVisible(el: HTMLElement) {
-  const m = getComputedStyle(el).transform
-  if (!m || m === 'none') return { x: 0, y: 0 }
-  const mat = new DOMMatrixReadOnly(m)
-  return { x: mat.m41, y: mat.m42 }
+function fuiteCalme() {
+  return (
+    !inicio.value ||
+    claim.value ||
+    !window.matchMedia('(pointer: fine)').matches ||
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  )
+}
+
+function boucleFuite(ms: number) {
+  fuiteRaf = 0
+  const el = btnClaim.value
+  const dt = fuiteHorloge ? Math.min((ms - fuiteHorloge) / 1000, 0.05) : 0
+  fuiteHorloge = ms
+  if (!el) return
+  if (fuiteCalme()) {
+    fuite.x = fuite.y = fuiteVel.x = fuiteVel.y = 0
+    fuiteRecorrido = 0
+    poserFuite(el)
+    fuiteHorloge = 0
+    return
+  }
+
+  // le rectangle est celui que l'on VOIT, c'est lui que le pointeur approche
+  const r = el.getBoundingClientRect()
+  let cibleX = 0
+  let cibleY = 0
+  const p = fuitePointeur
+  if (p && fuiteRecorrido < FUITE_TOTAL) {
+    const horsX = p.x < r.left ? r.left - p.x : p.x > r.right ? p.x - r.right : 0
+    const horsY = p.y < r.top ? r.top - p.y : p.y > r.bottom ? p.y - r.bottom : 0
+    const dist = Math.hypot(horsX, horsY)
+    if (dist < FUITE_ALCANCE) {
+      let dx = r.left + r.width / 2 - p.x
+      let dy = r.top + r.height / 2 - p.y
+      let d = Math.hypot(dx, dy)
+      if (d < 1) {
+        // pile au centre : une direction quelconque vaut mieux que NaN
+        dx = 0
+        dy = 1
+        d = 1
+      }
+      const k = (1 - dist / FUITE_ALCANCE) ** 2
+      cibleX = (dx / d) * FUITE_VMAX * k
+      cibleY = (dy / d) * FUITE_VMAX * k
+    }
+  }
+
+  // lissage independant du debit d'images
+  const a = 1 - Math.exp(-dt * FUITE_SUAVIDAD)
+  fuiteVel.x += (cibleX - fuiteVel.x) * a
+  fuiteVel.y += (cibleY - fuiteVel.y) * a
+
+  const homeX = r.left - fuite.x
+  const homeY = r.top - fuite.y
+  const marge = 10
+  let x = fuite.x + fuiteVel.x * dt
+  let y = fuite.y + fuiteVel.y * dt
+  const minX = marge - homeX
+  const maxX = window.innerWidth - marge - r.width - homeX
+  const minY = marge - homeY
+  const maxY = window.innerHeight - marge - r.height - homeY
+  // contre un bord de fenetre, la vitesse s'eteint de ce cote
+  if (x < minX || x > maxX) fuiteVel.x = 0
+  if (y < minY || y > maxY) fuiteVel.y = 0
+  x = Math.min(maxX, Math.max(minX, x))
+  y = Math.min(maxY, Math.max(minY, y))
+
+  // le dernier morceau est raccourci pour tomber pile sur le budget
+  let fait = Math.hypot(x - fuite.x, y - fuite.y)
+  const resto = FUITE_TOTAL - fuiteRecorrido
+  if (fait > resto) {
+    const f = resto / fait
+    x = fuite.x + (x - fuite.x) * f
+    y = fuite.y + (y - fuite.y) * f
+    fait = resto
+  }
+  fuiteRecorrido += fait
+  if (fuiteRecorrido >= FUITE_TOTAL - 0.01) fuiteVel.x = fuiteVel.y = 0
+  fuite.x = x
+  fuite.y = y
+  poserFuite(el)
+
+  const enMarche = Math.hypot(fuiteVel.x, fuiteVel.y) > 1.5 || Math.hypot(cibleX, cibleY) > 1.5
+  if (enMarche) fuiteRaf = requestAnimationFrame(boucleFuite)
+  else fuiteHorloge = 0
 }
 
 function auFuiteClaim(e: PointerEvent) {
-  const el = btnClaim.value
-  const calme =
-    !el ||
-    !inicio.value ||
-    claim.value ||
-    e.pointerType === 'touch' ||
-    !window.matchMedia('(pointer: fine)').matches ||
-    window.matchMedia('(prefers-reduced-motion: reduce)').matches
-  if (calme) {
-    if (fuite.x || fuite.y || fuiteRecorrido) {
-      fuite.x = 0
-      fuite.y = 0
-      fuiteRecorrido = 0
-      poserFuite(el)
-    }
+  if (e.pointerType === 'touch') {
+    fuitePointeur = null
     return
   }
-  // el chemin est epuise : il reste ou il est, pour de bon
-  const resto = FUITE_TOTAL - fuiteRecorrido
-  if (resto < FUITE_MINIMO) return
-  if (performance.now() - fuiteDesde < FUITE_PAUSA) return
-  // le rectangle est celui que l'on VOIT : c'est lui que le pointeur approche
-  const r = el.getBoundingClientRect()
-  const horsX = e.clientX < r.left ? r.left - e.clientX : e.clientX > r.right ? e.clientX - r.right : 0
-  const horsY = e.clientY < r.top ? r.top - e.clientY : e.clientY > r.bottom ? e.clientY - r.bottom : 0
-  if (Math.hypot(horsX, horsY) > FUITE_CERCA) return
+  fuitePointeur = { x: e.clientX, y: e.clientY }
+  if (!fuiteRaf && fuiteRecorrido < FUITE_TOTAL) fuiteRaf = requestAnimationFrame(boucleFuite)
+}
 
-  let dx = r.left + r.width / 2 - e.clientX
-  let dy = r.top + r.height / 2 - e.clientY
-  let d = Math.hypot(dx, dy)
-  if (d < 1) {
-    // pile au centre : n'importe quelle direction vaut mieux que NaN
-    dx = 1
-    dy = 0
-    d = 1
-  }
-
-  // base : la place d'ORIGINE, deduite de ce qui est dessine et de ce qui est applique
-  const vu = fuiteVisible(el)
-  const homeX = r.left - vu.x
-  const homeY = r.top - vu.y
-
-  // le dernier pas est raccourci pour tomber pile sur le total
-  const pas = Math.min(FUITE_PASO, resto)
-  let x = fuite.x + (dx / d) * pas
-  let y = fuite.y + (dy / d) * pas
-  const marge = 10
-  x = Math.min(window.innerWidth - marge - r.width - homeX, Math.max(marge - homeX, x))
-  y = Math.min(window.innerHeight - marge - r.height - homeY, Math.max(marge - homeY, y))
-
-  // coince contre un bord de fenetre : rien ne bouge, on peut cliquer
-  const fait = Math.hypot(x - fuite.x, y - fuite.y)
-  if (fait < FUITE_MINIMO) return
-
-  fuite.x = x
-  fuite.y = y
-  fuiteRecorrido += fait
-  fuiteDesde = performance.now()
-  poserFuite(el)
+/** Le pointeur quitte la page : plus rien ne repousse, il n'y a pas d'evenement de plus. */
+function auFuiteFin() {
+  fuitePointeur = null
 }
 
 function auPopState() {
@@ -870,6 +910,7 @@ onMounted(() => {
   window.addEventListener('popstate', auPopState)
   window.addEventListener('click', auClicApresFermeture, true)
   window.addEventListener('pointermove', auFuiteClaim)
+  document.documentElement.addEventListener('pointerleave', auFuiteFin)
 })
 
 watch(() => mur.value.morphSeconds, () => relancerMorph())
@@ -887,6 +928,7 @@ watch(pastille, (p, avant) => {
 onBeforeUnmount(() => {
   cancelAnimationFrame(firmaRaf)
   cancelAnimationFrame(caretRaf)
+  cancelAnimationFrame(fuiteRaf)
   miroirCaret?.remove()
   clearInterval(syncTimer)
   clearInterval(morphTimer)
@@ -897,6 +939,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('pointerdown', auDehors, true)
   window.removeEventListener('click', auClicApresFermeture, true)
   window.removeEventListener('pointermove', auFuiteClaim)
+  document.documentElement.removeEventListener('pointerleave', auFuiteFin)
   lacher()
 })
 
@@ -1644,10 +1687,7 @@ onBeforeUnmount(() => {
   color: #fff;
   text-decoration: none;
   cursor: pointer;
-  transition:
-    opacity 0.35s ease-out,
-    background 0.2s ease-out,
-    transform 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+  transition: opacity 0.35s ease-out, background 0.2s ease-out;
 }
 
 .claim:hover {
