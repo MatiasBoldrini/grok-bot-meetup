@@ -5,7 +5,7 @@
 export default {
   async fetch(request: Request) {
     try {
-      const { readWallState } = await import('../../server/luma.ts')
+      const { readWallState } = await import('../../server/luma.js')
       const url = new URL(request.url)
       const state = await readWallState(
         {

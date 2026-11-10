@@ -1,4 +1,4 @@
-import { invalidateLuma } from '../../server/luma.ts'
+import { invalidateLuma } from '../../server/luma.js'
 
 export default {
   async fetch() {

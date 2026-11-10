@@ -1,5 +1,5 @@
-import { AsistenciaError, type CodigoAsistencia } from '../../src/meetup/asistencia.ts'
-import { registrarAsistencia } from '../../server/luma.ts'
+import { AsistenciaError, type CodigoAsistencia } from '../../src/meetup/asistencia.js'
+import { registrarAsistencia } from '../../server/luma.js'
 
 function statutDe(codigo: CodigoAsistencia) {
   if (codigo === 'correo') return 400

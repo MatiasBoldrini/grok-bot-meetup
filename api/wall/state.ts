@@ -1,4 +1,4 @@
-import { readWallState } from '../../server/luma.ts'
+import { readWallState } from '../../server/luma.js'
 
 export default {
   async fetch(request: Request) {
