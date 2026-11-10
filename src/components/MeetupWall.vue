@@ -35,6 +35,8 @@ const DEMO = [
 ]
 
 const PAPER = '#f6f6f6'
+/** Le depot de ce mur, pas celui d'origine. */
+const REPO = 'https://github.com/MatiasBoldrini/grok-bot-meetup'
 const mur = ref<MeetupConfig>(readConfig())
 const overlay = ref<OverlayReglage>(overlayBase())
 /** Page Luma de l'evenement branche sur le mur. Vide tant que l'API ne l'a pas dit. */
@@ -1075,6 +1077,23 @@ onBeforeUnmount(() => {
 
     <!-- Monte en permanence : une transition ne joue pas au premier style, et
          demonter le bouton a la fermeture lui interdirait de s'effacer. -->
+    <a
+      v-show="!claim"
+      class="repo-lien"
+      :href="REPO"
+      target="_blank"
+      rel="noopener noreferrer"
+      :aria-label="t('wall.repoAria')"
+    >
+      <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true">
+        <path
+          d="M8 .5a7.5 7.5 0 0 0-2.37 14.62c.37.07.5-.16.5-.36v-1.3c-2.09.46-2.53-.99-2.53-.99-.34-.87-.83-1.1-.83-1.1-.68-.47.05-.46.05-.46.75.06 1.15.78 1.15.78.67 1.15 1.76.82 2.19.63.07-.49.26-.83.48-1.02-1.67-.19-3.42-.83-3.42-3.72 0-.82.29-1.5.78-2.02-.08-.19-.34-.96.07-1.99 0 0 .63-.2 2.06.77a7.1 7.1 0 0 1 3.75 0c1.43-.97 2.06-.77 2.06-.77.41 1.03.15 1.8.07 1.99.49.52.78 1.2.78 2.02 0 2.9-1.76 3.53-3.44 3.71.27.23.51.69.51 1.39v2.06c0 .2.13.44.51.36A7.5 7.5 0 0 0 8 .5z"
+          fill="currentColor"
+        />
+      </svg>
+      Repo
+    </a>
+
     <button
       type="button"
       class="retour"
@@ -1456,6 +1475,30 @@ onBeforeUnmount(() => {
   color: var(--mur-ink);
   overflow: hidden;
   font-family: 'Universal Sans Text', ui-sans-serif, system-ui, sans-serif;
+}
+
+.repo-lien {
+  position: absolute;
+  top: 1.6rem;
+  left: 1.75rem;
+  z-index: 4;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: #8a8a8a;
+  font-family: 'Universal Sans Text', sans-serif;
+  font-size: 0.95rem;
+  font-weight: 400;
+  letter-spacing: -0.01em;
+  text-decoration: none;
+}
+
+.repo-lien svg {
+  flex-shrink: 0;
+}
+
+.repo-lien:hover {
+  color: var(--mur-ink);
 }
 
 .retour {
@@ -2421,6 +2464,11 @@ onBeforeUnmount(() => {
   .editer,
   .reglages {
     right: 1.2rem;
+  }
+
+  .repo-lien,
+  .retour {
+    left: 1.2rem;
   }
 
   .haut {

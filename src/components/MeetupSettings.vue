@@ -26,14 +26,6 @@ function setCurseur(key: ClaveNumero, value: string) {
   overlay.value = { ...overlay.value, [key]: n }
 }
 
-function basculerFirma() {
-  overlay.value = { ...overlay.value, firmaVisible: !overlay.value.firmaVisible }
-}
-
-function basculerMirada() {
-  overlay.value = { ...overlay.value, mirada: !overlay.value.mirada }
-}
-
 function formatCurseur(n: number) {
   return Number.isInteger(n) ? String(n) : n.toFixed(2).replace(/0$/, '').replace(/\.0$/, '')
 }
@@ -98,17 +90,6 @@ function auClavier(event: KeyboardEvent, index: number) {
             @input="setCurseur(c[0], ($event.target as HTMLInputElement).value)"
           />
         </label>
-        <label class="firma-oculto mirada">
-          <input type="checkbox" :checked="overlay.mirada" @change="basculerMirada" />
-          <span>{{ t('wall.glance') }}</span>
-        </label>
-        <section class="firma">
-          <p class="firma-titre">{{ t('wall.presentedBlock') }}</p>
-          <label class="firma-oculto">
-            <input type="checkbox" :checked="!overlay.firmaVisible" @change="basculerFirma" />
-            <span>{{ t('wall.hidden') }}</span>
-          </label>
-        </section>
     </template>
 
     <template v-else-if="claim">
@@ -335,31 +316,6 @@ function auClavier(event: KeyboardEvent, index: number) {
 }
 
 .overlay-titre {
-  margin: 0 0 0.55rem;
-  font-size: 0.78rem;
-  letter-spacing: -0.01em;
-  color: #8a8a8a;
-}
-
-.firma {
-  margin-top: 1.15rem;
-  padding-top: 1rem;
-  border-top: 1px solid #ececec;
-}
-
-.firma-oculto {
-  display: flex;
-  align-items: center;
-  gap: 0.45rem;
-  font-size: 0.92rem;
-  cursor: pointer;
-}
-
-.mirada {
-  margin-top: 1.05rem;
-}
-
-.firma-titre {
   margin: 0 0 0.55rem;
   font-size: 0.78rem;
   letter-spacing: -0.01em;
