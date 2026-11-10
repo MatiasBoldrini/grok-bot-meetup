@@ -1826,12 +1826,13 @@ onBeforeUnmount(() => {
 }
 
 /*
- * 1 a 64rem, la taille reglee. Au-dela le titre, la ligne d'attente et le
- * bouton grandissent avec la fenetre, jusqu'a 1,8. Sous 64rem la media
- * query remplace ces tailles.
+ * Jusqu'a 100rem, la taille reglee. Le titre, la ligne d'attente et le
+ * bouton ne grandissent qu'au-dela, et au plus de 1,25 : a 64rem deja
+ * 1,8 rendait le mot gigantesque. Sous 64rem la media query remplace
+ * ces tailles.
  */
 .mur--inicio {
-  --escena: clamp(1, 100vw / 64rem, 1.8);
+  --escena: clamp(1, 100vw / 100rem, 1.25);
 }
 
 .mur--inicio .lieu {
