@@ -3,7 +3,6 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, useTemplateRef, wa
 import BloubBot from '@/components/BloubBot.vue'
 import BotTile from '@/components/BotTile.vue'
 import ChampBots from '@/components/ChampBots.vue'
-import ClaimQr from '@/components/ClaimQr.vue'
 import MeetupSettings from '@/components/MeetupSettings.vue'
 import { EXPRESSIONS, type ExpressionId } from '@/bot/expressions'
 import { COLORS, SHAPES, type ColorId, type ShapeId } from '@/bot/skins'
@@ -186,7 +185,12 @@ function auBlurCaret() {
 
 const enviando = ref(false)
 const errorPase = ref('')
-const pase = ref<{ name: string; qrUrl: string } | null>(null)
+const codigoPase = ref('')
+const pase = ref<{ name: string; nuevo: string; existente: string } | null>(null)
+/** Les questions de credits. La page derriere reste le bot : la liste ne s'y pose plus. */
+const creditosAbiertos = computed(() => pase.value !== null)
+const boiteCreditos = useTemplateRef<HTMLDialogElement>('boiteCreditos')
+useModalDialog(creditosAbiertos, boiteCreditos)
 const demoRestants = [...DEMO]
 
 let syncTimer = 0
@@ -332,6 +336,13 @@ function styleFirma() {
 function prenom(nom: string) {
   const bout = nom.trim().split(/\s+/)[0] || nom
   return bout
+}
+
+/** Premier mot du nom Luma. Un courriel ne se glisse pas dans la question. */
+function preguntaCredito(nom: string) {
+  const name = prenom(nom)
+  if (!name || name.includes('@')) return t('meetup.creditAsk')
+  return t('meetup.creditAskName', { name })
 }
 
 function autre<T>(liste: readonly T[], actuel: T): T {
@@ -667,6 +678,11 @@ function fermerSpeakers(e: MouseEvent) {
   if (e.target === e.currentTarget) speakers.value = false
 }
 
+function fermerCreditos(e?: MouseEvent) {
+  if (e && e.target !== e.currentTarget) return
+  if (pase.value) otroPase()
+}
+
 function ouvrirClaim() {
   if (claim.value) return
   speakers.value = false
@@ -685,8 +701,14 @@ function limpiarPase() {
   pase.value = null
   correo.value = ''
   errorPase.value = ''
+  codigoPase.value = ''
   esperaEvento.value = false
   enviando.value = false
+}
+
+function abrirCredito(url: string) {
+  if (!url) return
+  window.open(url, '_blank', 'noopener,noreferrer')
 }
 
 function mensajePase(codigo: string) {
@@ -707,6 +729,7 @@ async function enviarCorreo() {
   }
   enviando.value = true
   errorPase.value = ''
+  codigoPase.value = ''
   esperaEvento.value = false
   if (aunNoEmpieza(evento.value?.startAt ?? '')) {
     esperaEvento.value = true
@@ -719,13 +742,26 @@ async function enviarCorreo() {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ email: correo.value })
     })
-    const j = (await r.json().catch(() => ({}))) as { error?: string; name?: string; qrUrl?: string }
+    const j = (await r.json().catch(() => ({}))) as {
+      error?: string
+      name?: string
+      qrUrl?: string
+      nuevo?: string
+      existente?: string
+    }
     if (!r.ok || !j.qrUrl) {
       if (j.error === 'temprano') esperaEvento.value = true
-      else errorPase.value = mensajePase(j.error || '')
+      else {
+        codigoPase.value = j.error || ''
+        errorPase.value = mensajePase(j.error || '')
+      }
       return
     }
-    pase.value = { name: j.name || correo.value.trim(), qrUrl: j.qrUrl }
+    pase.value = {
+      name: j.name || correo.value.trim(),
+      nuevo: typeof j.nuevo === 'string' ? j.nuevo : '',
+      existente: typeof j.existente === 'string' ? j.existente : ''
+    }
   } catch {
     errorPase.value = t('meetup.emailFailed')
   } finally {
@@ -1211,14 +1247,17 @@ onBeforeUnmount(() => {
             <p v-if="esperaEvento" class="pase-error" role="status">
               {{ t('meetup.emailEarly') }}<button type="button" class="pase-speakers" @click="speakers = true">{{ t('meetup.speakers') }}</button>{{ t('meetup.emailEarlyAfter') }}
             </p>
+            <p v-else-if="codigoPase === 'ausente'" class="pase-error" role="alert">
+              {{ t('meetup.emailAbsent') }}<a
+                v-if="evento"
+                class="pase-speakers"
+                :href="evento.url"
+                target="_blank"
+                rel="noopener noreferrer"
+              >Luma</a><template v-else>Luma</template>{{ t('meetup.emailAbsentAfter') }}
+            </p>
             <p v-else-if="errorPase" class="pase-error" role="alert">{{ errorPase }}</p>
           </form>
-          <div v-else class="pase-listo">
-            <ClaimQr :url="pase.qrUrl" />
-            <p class="pase-nombre">{{ t('meetup.emailReady') }}</p>
-            <p class="pase-quien">{{ pase.name }}</p>
-            <button type="button" @click="otroPase">{{ t('meetup.emailOther') }}</button>
-          </div>
         </aside>
 
       <div class="scene">
@@ -1416,6 +1455,28 @@ onBeforeUnmount(() => {
         <span :style="{ background: c.hex }" />
       </button>
     </div>
+
+    <dialog
+      ref="boiteCreditos"
+      class="dialogue creditos-boite"
+      :aria-label="pase ? preguntaCredito(pase.name) : t('meetup.creditAsk')"
+      @close="fermerCreditos()"
+      @cancel.prevent="fermerCreditos()"
+      @click="fermerCreditos"
+    >
+      <template v-if="pase">
+      <p class="pase-pregunta">{{ preguntaCredito(pase.name) }}</p>
+      <p class="pase-nota creditos-duda">{{ t('meetup.creditUnsure') }}</p>
+      <div class="creditos-par">
+        <button type="button" class="pase-via pase-via--cuadro" :disabled="!pase.nuevo" @click="abrirCredito(pase.nuevo)">
+          {{ t('meetup.creditNew') }}
+        </button>
+        <button type="button" class="pase-via pase-via--cuadro pase-via--linea" :disabled="!pase.existente" @click="abrirCredito(pase.existente)">
+          {{ t('meetup.creditOld') }}
+        </button>
+      </div>
+      </template>
+    </dialog>
 
     <dialog
       ref="boiteSpeakers"
@@ -1762,9 +1823,112 @@ onBeforeUnmount(() => {
   color: #8a8a8a;
 }
 
-.pase-listo button {
-  align-self: flex-start;
-  margin-top: 0.95rem;
+.pase-pregunta {
+  margin: 1rem 0 0;
+  text-align: center;
+  font-size: 1rem;
+  line-height: 1.35;
+  letter-spacing: -0.02em;
+}
+
+.pase-vias {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  width: 100%;
+  margin-top: 0.85rem;
+  gap: 0.45rem;
+}
+
+.pase-via {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 3.25rem;
+  margin: 0;
+  padding: 0 1.15rem;
+  border: 0;
+  border-radius: 999px;
+  background: #111;
+  color: #fff;
+  font: inherit;
+  font-size: 1rem;
+  letter-spacing: -0.01em;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.pase-via:hover {
+  background: #2a2a2a;
+}
+
+.pase-via:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.pase-via--linea {
+  background: #fff;
+  color: #111;
+  border: 1px solid #d6d6d6;
+}
+
+.pase-via--linea:hover {
+  background: #f3f3f3;
+}
+
+.creditos-par {
+  display: flex;
+  align-items: stretch;
+  align-self: stretch;
+  gap: 0;
+  margin: 0.95rem -1rem 0;
+  border-top: 1px solid rgb(60 60 67 / 0.16);
+}
+
+.creditos-boite .pase-via--cuadro {
+  box-sizing: border-box;
+  flex: 1 1 0;
+  width: auto;
+  height: 2.75rem;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #111;
+  font-size: 1.05rem;
+  font-weight: 400;
+  letter-spacing: -0.01em;
+}
+
+.creditos-boite .pase-via--cuadro:first-child {
+  font-weight: 550;
+}
+
+.creditos-boite .pase-via--cuadro:hover,
+.creditos-boite .pase-via--linea:hover {
+  background: rgb(0 0 0 / 0.04);
+}
+
+.creditos-boite .pase-via--linea {
+  background: transparent;
+  border: 0;
+  border-left: 1px solid rgb(60 60 67 / 0.16);
+}
+
+.pase-nota {
+  margin: 0;
+  text-align: center;
+  font-size: 0.78rem;
+  line-height: 1.35;
+  color: #8a8a8a;
+}
+
+.pase-atras {
+  align-self: center;
+  margin-top: 0.35rem;
   padding: 0;
   border: 0;
   background: none;
@@ -1795,11 +1959,42 @@ onBeforeUnmount(() => {
   cursor: pointer;
 }
 
-.pase-listo {
+.creditos-boite {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  width: 100%;
+  align-items: stretch;
+  width: min(17.5rem, calc(100vw - 2.5rem));
+  max-height: calc(100dvh - 2rem);
+  /* `translate` et non `transform` : l'ouverture du dialogue remet transform a none. */
+  top: 50%;
+  left: 50%;
+  right: auto;
+  bottom: auto;
+  height: fit-content;
+  margin: 0;
+  translate: -50% -50%;
+  padding: 1.15rem 1rem 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0.9rem;
+  background: #fff;
+  color: #111;
+  box-shadow: 0 16px 50px rgb(0 0 0 / 0.16);
+}
+
+.creditos-boite .pase-pregunta {
+  margin: 0;
+  padding: 0 0.25rem;
+  font-weight: 550;
+  font-size: 1.02rem;
+  letter-spacing: -0.022em;
+}
+
+.creditos-duda {
+  margin: 0.28rem 0 0;
+  padding: 0 0.35rem;
+  font-size: 0.82rem;
+  color: #8e8e93;
 }
 
 .pase-nombre,

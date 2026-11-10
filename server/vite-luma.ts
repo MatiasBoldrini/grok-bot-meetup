@@ -44,7 +44,9 @@ export function lumaWall(): Plugin {
       const envFile = loadEnv(server.config.mode, server.config.root, '')
       const env = (): LumaEnv => ({
         apiKey: envFile.LUMA_API_KEY || process.env.LUMA_API_KEY || '',
-        eventId: envFile.LUMA_EVENT_ID || process.env.LUMA_EVENT_ID || ''
+        eventId: envFile.LUMA_EVENT_ID || process.env.LUMA_EVENT_ID || '',
+        linkNew: envFile.CURSOR_LINK_NEW || process.env.CURSOR_LINK_NEW || '',
+        linkExisting: envFile.CURSOR_LINK_EXISTING || process.env.CURSOR_LINK_EXISTING || ''
       })
 
       server.middlewares.use(async (req, res, next) => {

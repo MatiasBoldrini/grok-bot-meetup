@@ -25,7 +25,9 @@ export default {
       const resultado = await registrarAsistencia(
         {
           apiKey: process.env.LUMA_API_KEY || '',
-          eventId: process.env.LUMA_EVENT_ID || ''
+          eventId: process.env.LUMA_EVENT_ID || '',
+          linkNew: process.env.CURSOR_LINK_NEW || '',
+          linkExisting: process.env.CURSOR_LINK_EXISTING || ''
         },
         email
       )

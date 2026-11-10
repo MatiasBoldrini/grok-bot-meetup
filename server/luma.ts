@@ -14,6 +14,9 @@ const LUMA = 'https://public-api.luma.com'
 export type LumaEnv = {
   apiKey: string
   eventId: string
+  /** Liens Cursor. Jamais dans le bundle : seulement apres un check-in reussi. */
+  linkNew?: string
+  linkExisting?: string
 }
 
 export type WallHealth = {
@@ -153,6 +156,22 @@ export type ResultadoAsistencia = {
   email: string
   name: string
   qrUrl: string
+  /** Vide si l'env n'a pas un https. Le client ne les connait pas avant. */
+  nuevo: string
+  existente: string
+}
+
+/** Un lien de credit n'est publiable que s'il est https. Le reste reste vide. */
+function lienCredit(valeur: string | undefined): string {
+  const brut = (valeur || '').trim()
+  if (!brut) return ''
+  try {
+    const u = new URL(brut)
+    if (u.protocol !== 'https:') return ''
+    return u.toString()
+  } catch {
+    return ''
+  }
 }
 
 export type EventoLuma = { id: string; name: string; startAt: string; url: string }
@@ -197,6 +216,13 @@ async function lumaSend(
   return { ok: r.ok, status: r.status, json }
 }
 
+function aprobacionDe(crudo: unknown): string {
+  if (!crudo || typeof crudo !== 'object') return ''
+  const o = crudo as Record<string, unknown>
+  const guest = o.guest && typeof o.guest === 'object' ? (o.guest as Record<string, unknown>) : o
+  return typeof guest.approval_status === 'string' ? guest.approval_status : ''
+}
+
 async function obtenerInvitado(apiKey: string, eventId: string, email: string): Promise<unknown | null> {
   const r = await lumaSend(apiKey, 'GET', '/v1/events/guests/get', {
     query: { event_id: eventId, id: email }
@@ -223,6 +249,9 @@ async function marcarEntrada(
     if (r.ok) return
     const apres = await obtenerInvitado(apiKey, eventId, email)
     if (apres && yaEntro(apres)) return
+    // Novembre 2026 : cette route a quitte l'OpenAPI et repond 404. L'invite
+    // est deja inscrit, les credits ne dependent pas de ce tampon.
+    if (r.status === 404) return
     if (i === 2) throw new AsistenciaError('luma')
     await attendre(400)
   }
@@ -307,8 +336,22 @@ export async function registrarAsistencia(
   if (aunNoEmpieza(event.startAt)) throw new AsistenciaError('temprano')
   const crudo = await obtenerInvitado(env.apiKey, event.id, email)
   if (!crudo) throw new AsistenciaError('ausente')
+  // On n'inscrit personne. Seul un invite deja Going passe au check-in.
+  const estado = aprobacionDe(crudo)
+  if (estado === 'pending_approval') throw new AsistenciaError('espera')
+  if (estado !== 'approved') throw new AsistenciaError('ausente')
   const pase = passeOuRien(event.id, crudo)
-  await marcarEntrada(env.apiKey, event.id, email, pase.id, attendre)
-  invalidateLuma()
-  return { created: false, email: pase.email, name: pase.name, qrUrl: pase.qrUrl }
+  // Deja coche : on ne rappelle pas Luma, le visiteur voit quand meme les credits.
+  if (!yaEntro(crudo)) {
+    await marcarEntrada(env.apiKey, event.id, email, pase.id, attendre)
+    invalidateLuma()
+  }
+  return {
+    created: false,
+    email: pase.email,
+    name: pase.name,
+    qrUrl: pase.qrUrl,
+    nuevo: lienCredit(env.linkNew),
+    existente: lienCredit(env.linkExisting)
+  }
 }
