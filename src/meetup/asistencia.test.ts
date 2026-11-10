@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { enlaceLuma, normalizarCorreo, paseDeInvitado, urlDelQr, yaEntro } from './asistencia'
+import { aunNoEmpieza, enlaceLuma, normalizarCorreo, paseDeInvitado, urlDelQr, yaEntro } from './asistencia'
 
 describe('asistencia', () => {
+  it('ne bloque que si l heure de debut est encore devant', () => {
+    expect(aunNoEmpieza('2026-11-18T22:00:00.000Z', Date.parse('2026-11-09T12:00:00.000Z'))).toBe(true)
+    expect(aunNoEmpieza('2026-11-06T20:00:00.000Z', Date.parse('2026-11-09T12:00:00.000Z'))).toBe(false)
+    expect(aunNoEmpieza('', Date.parse('2026-11-09T12:00:00.000Z'))).toBe(false)
+  })
+
   it('accepte un courriel et refuse le reste', () => {
     expect(normalizarCorreo('  Ana@Example.com ')).toBe('ana@example.com')
     expect(normalizarCorreo('ana')).toBeNull()

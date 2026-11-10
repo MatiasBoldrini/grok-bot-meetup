@@ -1,5 +1,6 @@
 import {
   AsistenciaError,
+  aunNoEmpieza,
   enlaceLuma,
   normalizarCorreo,
   paseDeInvitado,
@@ -18,7 +19,7 @@ export type LumaEnv = {
 export type WallHealth = {
   configured: boolean
   ok: boolean
-  event: { id: string; name: string; url: string } | null
+  event: { id: string; name: string; url: string; startAt: string } | null
   checkedIn: number
   error: string
   lastSync: number
@@ -157,7 +158,7 @@ export type ResultadoAsistencia = {
 export type EventoLuma = { id: string; name: string; startAt: string; url: string }
 
 /** id, nom, et l'URL publique si Luma en a donne une. */
-function ficheEvenement(crudo: unknown): { id: string; name: string; url: string } | null {
+function ficheEvenement(crudo: unknown): { id: string; name: string; url: string; startAt: string } | null {
   if (!crudo || typeof crudo !== 'object') return null
   const ev = crudo as Record<string, unknown>
   const id = typeof ev.id === 'string' ? ev.id : ''
@@ -165,7 +166,8 @@ function ficheEvenement(crudo: unknown): { id: string; name: string; url: string
   return {
     id,
     name: typeof ev.name === 'string' && ev.name ? ev.name : id,
-    url: enlaceLuma(typeof ev.url === 'string' ? ev.url : '')
+    url: enlaceLuma(typeof ev.url === 'string' ? ev.url : ''),
+    startAt: typeof ev.start_at === 'string' ? ev.start_at : ''
   }
 }
 export type TipoEntrada = { id: string; name: string }
@@ -302,6 +304,7 @@ export async function registrarAsistencia(
   const event = await resolveEvent({ ...env, eventId: opciones.eventId?.trim() || env.eventId }).catch(() => {
     throw new AsistenciaError('luma')
   })
+  if (aunNoEmpieza(event.startAt)) throw new AsistenciaError('temprano')
   const crudo = await obtenerInvitado(env.apiKey, event.id, email)
   if (!crudo) throw new AsistenciaError('ausente')
   const pase = passeOuRien(event.id, crudo)

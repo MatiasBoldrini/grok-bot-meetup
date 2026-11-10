@@ -1,7 +1,7 @@
 import { guestName, type LumaGuestRaw } from './guest.js'
 
 /** Codes renvoyes au mur. Pas le corps Luma : il ne doit pas fuiter. */
-export type CodigoAsistencia = 'correo' | 'config' | 'omitido' | 'ausente' | 'espera' | 'luma'
+export type CodigoAsistencia = 'correo' | 'config' | 'omitido' | 'ausente' | 'temprano' | 'espera' | 'luma'
 
 export class AsistenciaError extends Error {
   readonly codigo: CodigoAsistencia
@@ -18,7 +18,12 @@ export type Pase = {
   qrUrl: string
 }
 
-/** Minuscules, une seule forme. `null` si ce n'est pas une adresse. */
+/** Vrai tant que l'heure de debut est dans le futur. Sans heure, on ne bloque pas. */
+export function aunNoEmpieza(startAt: string, ahora = Date.now()): boolean {
+  const debut = Date.parse(startAt)
+  if (!Number.isFinite(debut)) return false
+  return ahora < debut
+}
 export function normalizarCorreo(value: string): string | null {
   const email = value.trim().toLowerCase()
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return null

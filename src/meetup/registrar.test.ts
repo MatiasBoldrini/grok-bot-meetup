@@ -40,6 +40,22 @@ describe('registrarAsistencia', () => {
     expect(fetch.mock.calls.some((c) => String(c[0]).includes('check-in-guest'))).toBe(false)
   })
 
+  it('refuse avant le debut, sans inscrire ni cocher', async () => {
+    const fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/v1/events/get')) {
+        return json(200, { event: { id: 'evt-1', name: 'Meetup', start_at: '2099-01-01T00:00:00.000Z' } })
+      }
+      return json(500, {})
+    })
+    vi.stubGlobal('fetch', fetch)
+    await expect(registrarAsistencia({ apiKey: 'secret', eventId: 'evt-1' }, 'ana@example.com', { attendre })).rejects.toMatchObject({
+      codigo: 'temprano'
+    })
+    expect(fetch.mock.calls.some((c) => String(c[0]).includes('/guests/'))).toBe(false)
+    expect(fetch.mock.calls.some((c) => String(c[0]).includes('check-in-guest'))).toBe(false)
+  })
+
   it('coche l entree d un invite deja inscrit, sans le recreer', async () => {
     const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)

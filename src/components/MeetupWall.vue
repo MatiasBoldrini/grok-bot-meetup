@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, useTemplateRef, watch } from 'vue'
 import BloubBot from '@/components/BloubBot.vue'
 import BotTile from '@/components/BotTile.vue'
 import ChampBots from '@/components/ChampBots.vue'
@@ -9,8 +9,9 @@ import { EXPRESSIONS, type ExpressionId } from '@/bot/expressions'
 import { COLORS, SHAPES, type ColorId, type ShapeId } from '@/bot/skins'
 import type { StateId } from '@/bot/states'
 import { langue, t } from '@/i18n'
+import { useModalDialog } from '@/ui/useModalDialog'
 import { applyMeta, clampMorphSeconds, readConfig, welcome, writeConfig, type MeetupConfig } from '@/meetup/config'
-import { enlaceLuma } from '@/meetup/asistencia'
+import { aunNoEmpieza, enlaceLuma } from '@/meetup/asistencia'
 import { overlayBase, type OverlayReglage } from '@/meetup/overlay'
 import { aligner, publicar, seccionDe } from '@/meetup/rutas'
 
@@ -37,7 +38,13 @@ const PAPER = '#f6f6f6'
 const mur = ref<MeetupConfig>(readConfig())
 const overlay = ref<OverlayReglage>(overlayBase())
 /** Page Luma de l'evenement branche sur le mur. Vide tant que l'API ne l'a pas dit. */
-const evento = ref<{ name: string; url: string } | null>(null)
+const evento = ref<{ name: string; url: string; startAt: string } | null>(null)
+/** Le canje est trop tot : on montre les speakers au lieu d'inscrire. */
+const esperaEvento = ref(false)
+/** Affiche de speakers, ouverte depuis le lien sous le bouton. */
+const speakers = ref(false)
+const boiteSpeakers = useTemplateRef<HTMLDialogElement>('boiteSpeakers')
+useModalDialog(speakers, boiteSpeakers)
 watch(
   [mur, langue],
   ([c]) => {
@@ -629,11 +636,12 @@ async function syncMur() {
     if (!r.ok) throw new Error(String(r.status))
     const s = (await r.json()) as {
       allocations?: Array<{ key: string; name?: string; checkedInAt?: string; at?: string }>
-      luma?: { event?: { name?: string; url?: string } | null }
+      luma?: { event?: { name?: string; url?: string; startAt?: string } | null }
     }
     const pagina = typeof s.luma?.event?.url === 'string' ? enlaceLuma(s.luma.event.url) : ''
     const nom = typeof s.luma?.event?.name === 'string' ? s.luma.event.name.trim() : ''
-    evento.value = pagina && nom ? { name: nom, url: pagina } : null
+    const startAt = typeof s.luma?.event?.startAt === 'string' ? s.luma.event.startAt : ''
+    evento.value = pagina && nom ? { name: nom, url: pagina, startAt } : null
     const recus = (s.allocations || [])
       .map((a) => ({
         key: a.key,
@@ -653,8 +661,13 @@ async function syncMur() {
   }
 }
 
+function fermerSpeakers(e: MouseEvent) {
+  if (e.target === e.currentTarget) speakers.value = false
+}
+
 function ouvrirClaim() {
   if (claim.value) return
+  speakers.value = false
   inicio.value = false
   claim.value = true
   lancerFete()
@@ -670,6 +683,7 @@ function limpiarPase() {
   pase.value = null
   correo.value = ''
   errorPase.value = ''
+  esperaEvento.value = false
   enviando.value = false
 }
 
@@ -691,6 +705,12 @@ async function enviarCorreo() {
   }
   enviando.value = true
   errorPase.value = ''
+  esperaEvento.value = false
+  if (aunNoEmpieza(evento.value?.startAt ?? '')) {
+    esperaEvento.value = true
+    enviando.value = false
+    return
+  }
   try {
     const r = await fetch('/wall/check-in', {
       method: 'POST',
@@ -699,7 +719,8 @@ async function enviarCorreo() {
     })
     const j = (await r.json().catch(() => ({}))) as { error?: string; name?: string; qrUrl?: string }
     if (!r.ok || !j.qrUrl) {
-      errorPase.value = mensajePase(j.error || '')
+      if (j.error === 'temprano') esperaEvento.value = true
+      else errorPase.value = mensajePase(j.error || '')
       return
     }
     pase.value = { name: j.name || correo.value.trim(), qrUrl: j.qrUrl }
@@ -1114,6 +1135,12 @@ onBeforeUnmount(() => {
             >
               {{ t('meetup.claim') }}
             </button>
+            <button
+              v-if="inicio"
+              type="button"
+              class="speakers"
+              @click="speakers = true"
+            >{{ t('meetup.speakers') }}</button>
           </section>
         </div>
 
@@ -1162,7 +1189,10 @@ onBeforeUnmount(() => {
               {{ t('meetup.claim') }}
             </button>
             <p v-if="enviando" class="pase-estado">{{ t('meetup.emailSending') }}</p>
-            <p v-if="errorPase" class="pase-error" role="alert">{{ errorPase }}</p>
+            <p v-if="esperaEvento" class="pase-error" role="status">
+              {{ t('meetup.emailEarly') }}<button type="button" class="pase-speakers" @click="speakers = true">{{ t('meetup.speakers') }}</button>{{ t('meetup.emailEarlyAfter') }}
+            </p>
+            <p v-else-if="errorPase" class="pase-error" role="alert">{{ errorPase }}</p>
           </form>
           <div v-else class="pase-listo">
             <ClaimQr :url="pase.qrUrl" />
@@ -1367,6 +1397,17 @@ onBeforeUnmount(() => {
         <span :style="{ background: c.hex }" />
       </button>
     </div>
+
+    <dialog
+      ref="boiteSpeakers"
+      class="dialogue speakers-boite"
+      :aria-label="t('meetup.speakers')"
+      @close="speakers = false"
+      @cancel.prevent="speakers = false"
+      @click="fermerSpeakers"
+    >
+      <img src="/brand/speakers.webp" width="1024" height="576" :alt="t('meetup.speakersAlt')" />
+    </dialog>
   </div>
 </template>
 
@@ -1693,6 +1734,17 @@ onBeforeUnmount(() => {
   color: #8a1c1c;
 }
 
+.pase-speakers {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 0.14em;
+  cursor: pointer;
+}
+
 .pase-listo {
   display: flex;
   flex-direction: column;
@@ -1862,6 +1914,43 @@ onBeforeUnmount(() => {
 
 .claim:hover {
   background: #2a2a2a;
+}
+
+.speakers {
+  margin: 0.85rem 0 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: #8a8a8a;
+  font-family: 'Universal Sans Text', sans-serif;
+  font-size: 0.95rem;
+  font-weight: 400;
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+  text-decoration: underline;
+  text-underline-offset: 0.16em;
+  cursor: pointer;
+}
+
+.speakers:hover {
+  color: #5e5e5e;
+}
+
+.speakers-boite {
+  margin: auto;
+  width: min(56rem, calc(100vw - 2rem));
+  max-width: calc(100vw - 2rem);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  overflow: visible;
+}
+
+.speakers-boite img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 0.75rem;
 }
 
 .mur--claim .claim {

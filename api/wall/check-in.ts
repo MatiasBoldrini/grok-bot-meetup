@@ -6,6 +6,7 @@ function statutDe(codigo: CodigoAsistencia) {
   if (codigo === 'config') return 503
   if (codigo === 'omitido') return 409
   if (codigo === 'ausente') return 404
+  if (codigo === 'temprano') return 425
   if (codigo === 'espera') return 504
   return 502
 }

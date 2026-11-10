@@ -13,3 +13,4 @@ CLAUDE.local.md
 # carnet de travail interne, en francais et decrivant des bugs non corriges :
 # il vit sur le disque, rien n'en sort
 tasks/
+.vercel
