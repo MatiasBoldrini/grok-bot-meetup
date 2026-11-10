@@ -1,7 +1,7 @@
 import { guestName, type LumaGuestRaw } from './guest'
 
 /** Codes renvoyes au mur. Pas le corps Luma : il ne doit pas fuiter. */
-export type CodigoAsistencia = 'correo' | 'config' | 'omitido' | 'espera' | 'luma'
+export type CodigoAsistencia = 'correo' | 'config' | 'omitido' | 'ausente' | 'espera' | 'luma'
 
 export class AsistenciaError extends Error {
   readonly codigo: CodigoAsistencia

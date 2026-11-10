@@ -65,6 +65,8 @@ let pret = false
 const bulle = ref<{ nom: string; phase: 'points' | 'texte' } | null>(null)
 /** « olee », des que la souris bouge apres un courriel valide. */
 const olee = ref(false)
+/** « 😂😂😂 », une fois le bouton revenu a sa place. */
+const risa = ref(false)
 const state = ref<StateId>('idle')
 const block = ref(0)
 const playing = ref(true)
@@ -675,6 +677,7 @@ function mensajePase(codigo: string) {
   if (codigo === 'correo') return t('meetup.emailInvalid')
   if (codigo === 'config') return t('meetup.emailMissing')
   if (codigo === 'omitido') return t('meetup.emailSkipped')
+  if (codigo === 'ausente') return t('meetup.emailAbsent')
   if (codigo === 'espera') return t('meetup.emailWait')
   return t('meetup.emailFailed')
 }
@@ -808,6 +811,7 @@ function lacherFuite() {
   fuiteTerminee = false
   fuiteQuietoDesde = 0
   olee.value = false
+  risa.value = false
   fuite.x = fuite.y = fuiteVel.x = fuiteVel.y = 0
   fuiteRecorrido = 0
   fuitePointeur = null
@@ -858,6 +862,7 @@ function boucleFuite(ms: number) {
       fuite.x = fuite.y = 0
       fuiteRetour = false
       fuiteTerminee = true
+      risa.value = true
       poserFuite(el)
       fuiteHorloge = 0
       return
@@ -1169,12 +1174,12 @@ onBeforeUnmount(() => {
 
       <div class="scene">
         <div
-          v-if="claim && (evento || olee)"
+          v-if="claim && (evento || olee || risa)"
           class="bulle bulle--olee bulle--ouverte"
-          :class="olee && 'bulle--grito'"
           role="status"
         >
-          <p v-if="olee" class="bulle-texte">{{ t('meetup.olee') }}</p>
+          <p v-if="risa" class="bulle-texte">{{ t('meetup.risa') }}</p>
+          <p v-else-if="olee" class="bulle-texte">{{ t('meetup.olee') }}</p>
           <p v-else-if="evento" class="bulle-texte">
             {{ t('meetup.emailBubble') }}
             <a
@@ -2211,8 +2216,9 @@ onBeforeUnmount(() => {
 }
 
 /*
- * A cote du visage. Le lien « luma » ouvre l'evenement du serveur
- * (`/wall/state`), le meme pour tout le monde.
+ * Meme bulle que l'accueil d'un invite : blanc, filet, coin serre du cote
+ * de la queue. Ici elle est a droite du visage, donc la queue part a gauche.
+ * Le lien « luma » ouvre l'evenement du serveur.
  */
 .mur--claim .bulle--olee {
   position: fixed;
@@ -2222,13 +2228,14 @@ onBeforeUnmount(() => {
   height: auto;
   bottom: 24vh;
   z-index: 6;
-  width: min(17rem, 34vw);
-  max-width: none;
-  padding: 1.15rem 1.3rem 1.2rem;
-  border: 0;
-  border-radius: 1.55rem 1.55rem 1.55rem 0.45rem;
-  background: #111;
-  color: #fff;
+  width: max-content;
+  max-width: min(22rem, 34vw);
+  border-color: #b0b2b8;
+  background: #e7e8ec;
+  border-radius: 1.5rem 1.5rem 1.5rem 0.4rem;
+  filter:
+    drop-shadow(0 1px 1px rgb(17 17 17 / 8%))
+    drop-shadow(0 10px 22px rgb(17 17 17 / 16%));
   opacity: 0;
   pointer-events: none;
   transform: scale(0.86);
@@ -2239,9 +2246,6 @@ onBeforeUnmount(() => {
 }
 
 .mur--claim .bulle--olee .bulle-texte {
-  font-size: clamp(1.15rem, 1.45vw, 1.4rem);
-  line-height: 1.28;
-  color: #fff;
   text-wrap: pretty;
 }
 
@@ -2253,32 +2257,23 @@ onBeforeUnmount(() => {
 }
 
 .bulle-luma:hover {
-  color: #fff;
+  color: var(--ink);
 }
 
 .mur--claim .bulle--olee::after {
   right: auto;
   left: -7px;
-  bottom: 1.15rem;
-  width: 14px;
-  height: 14px;
-  background: #111;
+  bottom: 14px;
+  background: #e7e8ec;
   border: 0;
+  border-left: 1px solid #b0b2b8;
+  border-bottom: 1px solid #b0b2b8;
   transform: rotate(45deg);
 }
 
 .mur--claim .bulle--olee.bulle--ouverte {
   opacity: 1;
   transform: scale(1);
-}
-
-.mur--claim .bulle--olee.bulle--grito {
-  width: auto;
-}
-
-.mur--claim .bulle--olee.bulle--grito .bulle-texte {
-  font-size: clamp(2rem, 3.1vw, 2.75rem);
-  line-height: 1.05;
 }
 
 .points {
@@ -2425,7 +2420,8 @@ onBeforeUnmount(() => {
     left: auto;
     right: 1rem;
     bottom: 26vh;
-    width: min(16rem, calc(100vw - 2rem));
+    width: max-content;
+    max-width: min(22rem, calc(100vw - 2rem));
   }
 
   .bulle {

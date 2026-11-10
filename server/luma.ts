@@ -205,38 +205,6 @@ async function obtenerInvitado(apiKey: string, eventId: string, email: string): 
 }
 
 /**
- * Alta. Luma l'ajoute en arriere-plan et ne renvoie que les adresses refusees.
- * `send_email: false` : le mur montre le QR, il n'envoie pas le courriel Luma.
- */
-async function agregarInvitado(apiKey: string, eventId: string, email: string, ticketTypeId = '') {
-  const body: Record<string, unknown> = {
-    event_id: eventId,
-    guests: [{ email }],
-    approval_status: 'approved',
-    send_email: false
-  }
-  if (ticketTypeId) body.ticket = { event_ticket_type_id: ticketTypeId }
-  const r = await lumaSend(apiKey, 'POST', '/v1/events/guests/add', { body })
-  if (!r.ok) throw new AsistenciaError('luma')
-  const skipped = (r.json as { skipped?: Array<{ email?: string }> }).skipped ?? []
-  if (skipped.some((s) => s.email?.toLowerCase() === email)) throw new AsistenciaError('omitido')
-}
-
-async function esperarInvitado(
-  apiKey: string,
-  eventId: string,
-  email: string,
-  attendre: (ms: number) => Promise<void>
-): Promise<unknown> {
-  for (let i = 0; i < 6; i++) {
-    const crudo = await obtenerInvitado(apiKey, eventId, email)
-    if (crudo && paseDeInvitado(eventId, crudo)) return crudo
-    await attendre(400)
-  }
-  throw new AsistenciaError('espera')
-}
-
-/**
  * Le check-in n'est pas `guests/update-status` : ce POST ne change que
  * Going / declined / waitlist. L'heure d'entree vit sur le billet. L'ancienne
  * route reste servie (le changelog Luma le dit) et c'est elle qui la pose.
@@ -265,8 +233,8 @@ function passeOuRien(eventId: string, crudo: unknown): Pase {
 }
 
 /**
- * Confirmer le courriel : creer l'invite s'il n'existe pas, poser l'entree,
- * rendre l'URL de son QR. La cle reste dans l'environnement.
+ * Confirmer le courriel : l'invite doit deja etre sur l'evenement. On pose
+ * l'entree et on rend l'URL de son QR. La cle reste dans l'environnement.
  */
 function filas(json: unknown): Record<string, unknown>[] {
   if (!json || typeof json !== 'object') return []
@@ -334,15 +302,10 @@ export async function registrarAsistencia(
   const event = await resolveEvent({ ...env, eventId: opciones.eventId?.trim() || env.eventId }).catch(() => {
     throw new AsistenciaError('luma')
   })
-  let created = false
-  let crudo = await obtenerInvitado(env.apiKey, event.id, email)
-  if (!crudo) {
-    await agregarInvitado(env.apiKey, event.id, email, opciones.ticketTypeId?.trim() || '')
-    created = true
-    crudo = await esperarInvitado(env.apiKey, event.id, email, attendre)
-  }
+  const crudo = await obtenerInvitado(env.apiKey, event.id, email)
+  if (!crudo) throw new AsistenciaError('ausente')
   const pase = passeOuRien(event.id, crudo)
   await marcarEntrada(env.apiKey, event.id, email, pase.id, attendre)
   invalidateLuma()
-  return { created, email: pase.email, name: pase.name, qrUrl: pase.qrUrl }
+  return { created: false, email: pase.email, name: pase.name, qrUrl: pase.qrUrl }
 }
