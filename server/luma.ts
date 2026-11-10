@@ -1,5 +1,6 @@
 import {
   AsistenciaError,
+  enlaceLuma,
   normalizarCorreo,
   paseDeInvitado,
   yaEntro,
@@ -17,7 +18,7 @@ export type LumaEnv = {
 export type WallHealth = {
   configured: boolean
   ok: boolean
-  event: { id: string; name: string } | null
+  event: { id: string; name: string; url: string } | null
   checkedIn: number
   error: string
   lastSync: number
@@ -50,9 +51,9 @@ async function lumaGet(apiKey: string, path: string, query: Record<string, strin
 async function resolveEvent(env: LumaEnv) {
   if (env.eventId) {
     const j = await lumaGet(env.apiKey, '/v1/events/get', { event_id: env.eventId })
-    const ev = j.event || (j as { id?: string; name?: string })
-    if (!ev.id) throw new Error('event not found')
-    return { id: ev.id, name: ev.name || ev.id }
+    const ev = ficheEvenement(j.event) || ficheEvenement(j)
+    if (!ev) throw new Error('event not found')
+    return ev
   }
   const after = new Date(Date.now() - 18 * 3600e3).toISOString()
   const j = await lumaGet(env.apiKey, '/v1/calendars/events/list', {
@@ -61,11 +62,14 @@ async function resolveEvent(env: LumaEnv) {
     sort_column: 'start_at',
     sort_direction: 'asc'
   })
-  const ev = ((j.entries || []) as Array<{ event?: { id: string; name: string }; id?: string; name?: string }>)
-    .map((e) => e.event || e)
-    .find((e) => e.id)
-  if (!ev?.id) throw new Error('no upcoming events on this calendar')
-  return { id: ev.id, name: ev.name || ev.id }
+  const ev = ((j.entries || []) as unknown[])
+    .map((e) => {
+      const row = e && typeof e === 'object' ? (e as { event?: unknown }).event : null
+      return ficheEvenement(row && typeof row === 'object' ? row : e)
+    })
+    .find((e) => e)
+  if (!ev) throw new Error('no upcoming events on this calendar')
+  return ev
 }
 
 async function listCheckedIn(apiKey: string, eventId: string): Promise<Allocation[]> {
@@ -150,7 +154,20 @@ export type ResultadoAsistencia = {
   qrUrl: string
 }
 
-export type EventoLuma = { id: string; name: string; startAt: string }
+export type EventoLuma = { id: string; name: string; startAt: string; url: string }
+
+/** id, nom, et l'URL publique si Luma en a donne une. */
+function ficheEvenement(crudo: unknown): { id: string; name: string; url: string } | null {
+  if (!crudo || typeof crudo !== 'object') return null
+  const ev = crudo as Record<string, unknown>
+  const id = typeof ev.id === 'string' ? ev.id : ''
+  if (!id) return null
+  return {
+    id,
+    name: typeof ev.name === 'string' && ev.name ? ev.name : id,
+    url: enlaceLuma(typeof ev.url === 'string' ? ev.url : '')
+  }
+}
 export type TipoEntrada = { id: string; name: string }
 
 type LumaReponse = { ok: boolean; status: number; json: unknown }
@@ -272,12 +289,11 @@ export async function listarEventos(env: LumaEnv): Promise<EventoLuma[]> {
     const ev = (
       entry.event && typeof entry.event === 'object' ? entry.event : entry
     ) as Record<string, unknown>
-    const id = typeof ev.id === 'string' ? ev.id : ''
-    if (!id || vus.has(id)) continue
-    vus.add(id)
+    const fiche = ficheEvenement(ev)
+    if (!fiche || vus.has(fiche.id)) continue
+    vus.add(fiche.id)
     lista.push({
-      id,
-      name: typeof ev.name === 'string' && ev.name ? ev.name : id,
+      ...fiche,
       startAt: typeof ev.start_at === 'string' ? ev.start_at : ''
     })
   }

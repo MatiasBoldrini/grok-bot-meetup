@@ -26,6 +26,22 @@ export function normalizarCorreo(value: string): string | null {
 }
 
 /**
+ * Page publique d'un evenement Luma. On ne rend que `https` sur `luma.com`
+ * ou `lu.ma` : le champ vient de l'API, pas d'une saisie.
+ */
+export function enlaceLuma(valeur: string): string {
+  try {
+    const u = new URL(valeur.trim())
+    const hote = u.hostname
+    const luma = hote === 'luma.com' || hote === 'lu.ma' || hote.endsWith('.luma.com')
+    if (u.protocol !== 'https:' || !luma) return ''
+    return u.toString()
+  } catch {
+    return ''
+  }
+}
+
+/**
  * `check_in_qr_code` est parfois deja une URL, parfois la cle `pk` du billet.
  * Le QR du mur encode toujours une URL http.
  */

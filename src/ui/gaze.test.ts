@@ -57,13 +57,12 @@ describe('cible de regard', () => {
     expect(lookTarget(vise({ ny: 1 })).pitch).toBeLessThan(0)
   })
 
-  it('lit un champ plus bas que le bord de l ecran, et le lacet suit quand meme', () => {
-    const souris = lookTarget(vise({ ny: 1, nx: 0.4 }))
+  it('lit un champ dans le visage, et le lacet va d un bord a l autre', () => {
     const champ = lookTarget(vise({ ny: 0, nx: 0.4, lire: true }))
     expect(champ.pitch).toBe(PITCH_LECTURE)
-    expect(champ.pitch).toBeLessThan(souris.pitch)
+    expect(champ.pitch).toBeGreaterThan(-40)
     // le lacet suit toujours, mais avec le debattement de lecture : plus ample
-    expect(champ.yaw).toBe(-TURN + 0.4 * YAW_LECTURE)
+    expect(champ.yaw).toBe(0.4 * YAW_LECTURE)
     expect(YAW_LECTURE).toBeGreaterThan(YAW_MAX)
     const bord = lookTarget(vise({ nx: 1, lire: true })).yaw - lookTarget(vise({ nx: -1, lire: true })).yaw
     expect(bord).toBe(2 * YAW_LECTURE)

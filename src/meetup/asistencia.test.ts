@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { normalizarCorreo, paseDeInvitado, urlDelQr, yaEntro } from './asistencia'
+import { enlaceLuma, normalizarCorreo, paseDeInvitado, urlDelQr, yaEntro } from './asistencia'
 
 describe('asistencia', () => {
   it('accepte un courriel et refuse le reste', () => {
@@ -26,6 +26,14 @@ describe('asistencia', () => {
     expect(paseDeInvitado('evt-1', guest)?.qrUrl).toBe('https://luma.com/check-in/evt-1?pk=g-abc')
     expect(paseDeInvitado('evt-1', { guest })?.name).toBe('Ana')
     expect(paseDeInvitado('evt-1', { id: 'gst-1', user_email: 'a@b.c' })).toBeNull()
+  })
+
+  it('ne garde qu une page https de Luma', () => {
+    expect(enlaceLuma('https://luma.com/z8bwjr4j')).toBe('https://luma.com/z8bwjr4j')
+    expect(enlaceLuma(' https://lu.ma/abc ')).toBe('https://lu.ma/abc')
+    expect(enlaceLuma('http://luma.com/abc')).toBe('')
+    expect(enlaceLuma('https://evil.example/luma.com')).toBe('')
+    expect(enlaceLuma('javascript:alert(1)')).toBe('')
   })
 
   it('voit l entree sur le guest ou sur un billet', () => {

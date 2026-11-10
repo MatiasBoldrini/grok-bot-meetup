@@ -264,14 +264,14 @@ function aim() {
   if (!aiming) turnSince = clock
   const demiLargeur = Math.max(1, window.innerWidth / 2)
   const demiHauteur = Math.max(1, window.innerHeight / 2)
+  const originX = box.left + box.width / 2
+  const originY = box.top + box.height / 2
   const point: { x: number; y: number; nx?: number } | null = props.aimAt ?? pointer
   engine.setLook(
     lookTarget({
       // `nx` pose par l'appelant (avance dans le champ) prime sur la demi-fenetre
-      nx: point
-        ? (point.nx ?? clamp((point.x - (box.left + box.width / 2)) / demiLargeur, -1, 1))
-        : 0,
-      ny: point ? clamp((point.y - (box.top + box.height / 2)) / demiHauteur, -1, 1) : 0,
+      nx: point ? (point.nx ?? clamp((point.x - originX) / demiLargeur, -1, 1)) : 0,
+      ny: point ? clamp((point.y - originY) / demiHauteur, -1, 1) : 0,
       tour: easings.easeOutQuint(clamp((clock - turnSince) / TURN_TIME)),
       pointer: point !== null,
       // le caret : les lettres restent sur x, le regard se pose plus bas

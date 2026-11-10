@@ -10,6 +10,7 @@ import { COLORS, SHAPES, type ColorId, type ShapeId } from '@/bot/skins'
 import type { StateId } from '@/bot/states'
 import { langue, t } from '@/i18n'
 import { applyMeta, clampMorphSeconds, readConfig, welcome, writeConfig, type MeetupConfig } from '@/meetup/config'
+import { enlaceLuma } from '@/meetup/asistencia'
 import { overlayBase, type OverlayReglage } from '@/meetup/overlay'
 import { aligner, publicar, seccionDe } from '@/meetup/rutas'
 
@@ -35,6 +36,8 @@ const DEMO = [
 const PAPER = '#f6f6f6'
 const mur = ref<MeetupConfig>(readConfig())
 const overlay = ref<OverlayReglage>(overlayBase())
+/** Page Luma de l'evenement branche sur le mur. Vide tant que l'API ne l'a pas dit. */
+const evento = ref<{ name: string; url: string } | null>(null)
 watch(
   [mur, langue],
   ([c]) => {
@@ -70,15 +73,6 @@ let teintFixe = false
 const coloresAbiertos = ref(false)
 const lugarColores = ref<{ x: number; y: number } | null>(null)
 const teintActuel = computed(() => COLORS.find((c) => c.id === color.value)?.hex ?? '#0a0a0c')
-/** Encre du bouton : le fond est le teint du bot, le texte reste lisible dessus. */
-const encrePase = computed(() => {
-  const v = parseInt(teintActuel.value.slice(1), 16)
-  const r = (v >> 16) & 255
-  const g = (v >> 8) & 255
-  const b = v & 255
-  const y = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255
-  return y > 0.62 ? '#111111' : '#ffffff'
-})
 const expression = ref<ExpressionId>('neutre')
 const ouverte = seccionDe(location.pathname)
 const claim = ref(ouverte === 'canjear')
@@ -89,6 +83,7 @@ const claim = ref(ouverte === 'canjear')
 const inicio = ref(!claim.value)
 const edition = ref(new URLSearchParams(location.search).has('setup'))
 const btnClaim = ref<HTMLButtonElement | null>(null)
+const btnPase = ref<HTMLButtonElement | null>(null)
 const pied = ref<HTMLElement | null>(null)
 
 /** Menu de l'element touche. Absent du DOM tant qu'on n'a pas clique. */
@@ -489,7 +484,7 @@ function auClicSecondaire(e: MouseEvent) {
 }
 
 /**
- * Clic secondaire sur « Ya comenzamos ». Le champ montre la phrase a l'ecran ;
+ * Clic secondaire sur « Grok Bot Meetup ». Le champ montre la phrase a l'ecran ;
  * une valeur vide retombe sur la traduction, donc ouvrir le menu ne la fige pas.
  */
 function auMenuTitre(e: MouseEvent) {
@@ -630,7 +625,11 @@ async function syncMur() {
     if (!r.ok) throw new Error(String(r.status))
     const s = (await r.json()) as {
       allocations?: Array<{ key: string; name?: string; checkedInAt?: string; at?: string }>
+      luma?: { event?: { name?: string; url?: string } | null }
     }
+    const pagina = typeof s.luma?.event?.url === 'string' ? enlaceLuma(s.luma.event.url) : ''
+    const nom = typeof s.luma?.event?.name === 'string' ? s.luma.event.name.trim() : ''
+    evento.value = pagina && nom ? { name: nom, url: pagina } : null
     const recus = (s.allocations || [])
       .map((a) => ({
         key: a.key,
@@ -718,6 +717,7 @@ function fermerClaim() {
   if (!claim.value) return
   claim.value = false
   inicio.value = true
+  lacherFuite()
   limpiarPase()
   relancerMorph()
   if (!enFete) state.value = 'idle'
@@ -755,22 +755,27 @@ function auClavier(e: KeyboardEvent) {
 }
 
 /**
- * Le bouton que le curseur repousse, comme un aimant de meme polarite : une
- * force CONTINUE, pas un saut par approche. Plus le pointeur est pres du bord
+ * Le bouton du formulaire de claim, pas celui de l'ouverture. Le curseur le
+ * repousse comme un aimant de meme polarite : une force CONTINUE, pas un saut
+ * par approche. Plus le pointeur est pres du bord
  * du bouton, plus la vitesse visee est forte (`FUITE_VMAX` au contact, nulle a
  * `FUITE_ALCANCE`), dans la direction opposee, sur les deux axes. La vitesse
  * est lissee puis integree a chaque image : il demarre et s'arrete en douceur,
  * et un curseur plus rapide que `FUITE_VMAX` le rattrape.
  *
- * Le chemin qu'il peut parcourir est un BUDGET (`FUITE_TOTAL`, additionne) :
- * epuise, il ne bouge plus jamais. Un rayon autour de la place d'origine ne
- * suffisait pas, le curseur le faisait glisser le long du bord sans fin. La
- * fenetre le borne aussi, il ne sort jamais de l'ecran, et coince contre un
- * bord on l'attrape. Il ne revient pas de lui-meme.
+ * Le chemin qu'il peut parcourir est un BUDGET (`FUITE_TOTAL`, additionne).
+ * Epuise, des que la souris lache, ou coince contre un bord sans avancer,
+ * il revient a sa place et n'en repart plus : le clic redevient possible. Un rayon autour de
+ * l'origine ne suffisait pas, le curseur le faisait glisser le long du bord
+ * sans fin. La fenetre le borne aussi : il ne sort jamais de l'ecran.
  *
  * Pas de transition CSS sur le transform : elle ajouterait son propre retard
  * a une vitesse deja lissee. La boucle ne tourne que tant que quelque chose
  * bouge. Le tactile n'a pas de survol et `prefers-reduced-motion` le laisse fixe.
+ *
+ * Il reste en place tant qu'il n'y a pas d'adresse, puis tant que la souris
+ * n'a pas bouge APRES cette adresse. Sinon le visiteur voit le truc avant
+ * d'avoir ecrit.
  */
 const FUITE_ALCANCE = 120
 const FUITE_VMAX = 560
@@ -782,6 +787,29 @@ let fuitePointeur: { x: number; y: number } | null = null
 let fuiteRecorrido = 0
 let fuiteRaf = 0
 let fuiteHorloge = 0
+/** Arme au premier mouvement de souris qui suit une adresse valide. */
+let fuiteArmee = false
+/** La fuite est finie : on le ramene, et il ne repart plus. */
+let fuiteRetour = false
+let fuiteTerminee = false
+/** Depuis quand il est coince (bord de fenetre) sans avancer. */
+let fuiteQuietoDesde = 0
+const COURRIEL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
+function courrielPose() {
+  return COURRIEL.test(correo.value.trim())
+}
+
+function lacherFuite() {
+  fuiteArmee = false
+  fuiteRetour = false
+  fuiteTerminee = false
+  fuiteQuietoDesde = 0
+  fuite.x = fuite.y = fuiteVel.x = fuiteVel.y = 0
+  fuiteRecorrido = 0
+  fuitePointeur = null
+  poserFuite(btnPase.value)
+}
 
 function poserFuite(el: HTMLElement | null) {
   if (!el) return
@@ -793,8 +821,9 @@ function poserFuite(el: HTMLElement | null) {
 
 function fuiteCalme() {
   return (
-    !inicio.value ||
-    claim.value ||
+    !claim.value ||
+    !btnPase.value ||
+    !fuiteArmee ||
     !window.matchMedia('(pointer: fine)').matches ||
     window.matchMedia('(prefers-reduced-motion: reduce)').matches
   )
@@ -802,15 +831,36 @@ function fuiteCalme() {
 
 function boucleFuite(ms: number) {
   fuiteRaf = 0
-  const el = btnClaim.value
+  const el = btnPase.value
   const dt = fuiteHorloge ? Math.min((ms - fuiteHorloge) / 1000, 0.05) : 0
   fuiteHorloge = ms
   if (!el) return
   if (fuiteCalme()) {
     fuite.x = fuite.y = fuiteVel.x = fuiteVel.y = 0
     fuiteRecorrido = 0
+    fuiteRetour = false
+    fuiteTerminee = false
+    fuiteQuietoDesde = 0
     poserFuite(el)
     fuiteHorloge = 0
+    return
+  }
+
+  // Le budget est fini : retour lisse vers la place d'origine, sans la souris.
+  if (fuiteRetour) {
+    const rapproche = dt > 0 ? 1 - Math.exp(-dt * 7) : 0
+    fuite.x *= 1 - rapproche
+    fuite.y *= 1 - rapproche
+    if (Math.hypot(fuite.x, fuite.y) < 0.6) {
+      fuite.x = fuite.y = 0
+      fuiteRetour = false
+      fuiteTerminee = true
+      poserFuite(el)
+      fuiteHorloge = 0
+      return
+    }
+    poserFuite(el)
+    fuiteRaf = requestAnimationFrame(boucleFuite)
     return
   }
 
@@ -869,12 +919,30 @@ function boucleFuite(ms: number) {
     fait = resto
   }
   fuiteRecorrido += fait
-  if (fuiteRecorrido >= FUITE_TOTAL - 0.01) fuiteVel.x = fuiteVel.y = 0
+  if (fuiteRecorrido >= FUITE_TOTAL - 0.01) {
+    fuiteVel.x = fuiteVel.y = 0
+    fuiteRetour = true
+  }
+  // La souris a lache : la fuite est finie, on rentre.
+  const pose = Math.hypot(fuite.x, fuite.y) > 1 || Math.hypot(x, y) > 1
+  const arrete = Math.hypot(fuiteVel.x, fuiteVel.y) < 12
+  if (!fuiteRetour && pose && arrete && Math.hypot(cibleX, cibleY) < 1) {
+    fuiteRetour = true
+  }
+  // Coince contre un bord, il n'avance plus : au bout d'un instant, meme effet.
+  const clavado = pose && arrete && fait < 0.35
+  if (clavado) {
+    if (!fuiteQuietoDesde) fuiteQuietoDesde = ms
+    else if (ms - fuiteQuietoDesde > 480) fuiteRetour = true
+  } else if (fait >= 0.35) {
+    fuiteQuietoDesde = 0
+  }
   fuite.x = x
   fuite.y = y
   poserFuite(el)
 
-  const enMarche = Math.hypot(fuiteVel.x, fuiteVel.y) > 1.5 || Math.hypot(cibleX, cibleY) > 1.5
+  const enMarche =
+    fuiteRetour || Math.hypot(fuiteVel.x, fuiteVel.y) > 1.5 || Math.hypot(cibleX, cibleY) > 1.5
   if (enMarche) fuiteRaf = requestAnimationFrame(boucleFuite)
   else fuiteHorloge = 0
 }
@@ -884,7 +952,12 @@ function auFuiteClaim(e: PointerEvent) {
     fuitePointeur = null
     return
   }
+  if (fuiteTerminee) return
   fuitePointeur = { x: e.clientX, y: e.clientY }
+  if (!fuiteArmee) {
+    if (!courrielPose()) return
+    fuiteArmee = true
+  }
   if (!fuiteRaf && fuiteRecorrido < FUITE_TOTAL) fuiteRaf = requestAnimationFrame(boucleFuite)
 }
 
@@ -897,6 +970,7 @@ function auPopState() {
   const s = seccionDe(location.pathname)
   claim.value = s === 'canjear'
   inicio.value = !claim.value
+  if (!claim.value) lacherFuite()
 }
 
 onMounted(() => {
@@ -950,7 +1024,11 @@ onBeforeUnmount(() => {
     class="mur"
     :class="[claim && 'mur--claim', inicio && 'mur--inicio']"
     @click.capture="auClicPage"
-    :style="inicio ? { '--bot-escala': overlay.escala, '--bot-alto': overlay.altura, '--texto-alto': overlay.textoY } : undefined"
+    :style="
+      inicio || claim
+        ? { '--bot-escala': overlay.escala, '--bot-alto': overlay.altura, '--texto-alto': overlay.textoY }
+        : undefined
+    "
   >
     <h1 class="sr-only">{{ t('meetup.title') }}</h1>
 
@@ -996,7 +1074,26 @@ onBeforeUnmount(() => {
               :class="[inicio && 'lieu--reveal', inicio && pastille?.tipo === 'titulo' && 'lieu--on']"
               :style="styleTitre()"
               @contextmenu="auMenuTitre"
-            >{{ sousTitre() }}</p>
+            >{{ sousTitre() }}<a
+              v-if="inicio && evento"
+              class="evento"
+              :href="evento.url"
+              target="_blank"
+              rel="noopener noreferrer"
+              :aria-label="t('meetup.eventAria', { name: evento.name })"
+              @contextmenu.stop
+            >
+              <!--
+                Solar `square-arrow-right-up-linear`, recopié tel quel.
+                La page Luma, a droite du titre, sans repeter son nom.
+              -->
+              <svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true">
+                <g fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.5">
+                  <path stroke-linejoin="round" d="M9 15L15 9M15 13.5V9H10.5" />
+                  <path d="M12 22C7.28595 22 4.92893 22 3.46447 20.5355C2 19.0711 2 16.714 2 12C2 7.28595 2 4.92893 3.46447 3.46447C4.92893 2 7.28595 2 12 2C16.714 2 19.0711 2 20.5355 3.46447C22 4.92893 22 7.28595 22 12C22 16.714 22 19.0711 20.5355 20.5355C19.0711 22 16.714 22 12 22Z" />
+                </g>
+              </svg>
+            </a></p>
             <p class="pronto" :style="stylePronto()" :aria-hidden="inicio ? undefined : true">{{ textePronto }}</p>
             <button
               ref="btnClaim"
@@ -1019,6 +1116,17 @@ onBeforeUnmount(() => {
           >
             <div class="pase-caja">
               <label class="pase-etiqueta" for="correo-pase">{{ t('meetup.emailLabel') }}</label>
+              <!--
+                Solar `letter-linear`, recopié tel quel. La piste grise
+                (`emailHint`) dit quel courriel ecrire ; le libelle reste pour
+                le lecteur d'ecran.
+              -->
+              <svg class="pase-marca" width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
+                <g fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.5">
+                  <path d="M10 20H14C17.7712 20 19.6569 20 20.8284 18.8284C22 17.6569 22 15.7712 22 12C22 8.22876 22 6.34315 20.8284 5.17157C19.6569 4 17.7712 4 14 4H10C6.22876 4 4.34315 4 3.17157 5.17157C2 6.34315 2 8.22876 2 12C2 15.7712 2 17.6569 3.17157 18.8284C4.34315 20 6.22876 20 10 20Z" />
+                  <path d="M6 8L8.1589 9.79908C9.99553 11.3296 10.9139 12.0949 12 12.0949C13.0861 12.0949 14.0045 11.3296 15.8411 9.79908L18 8" />
+                </g>
+              </svg>
               <input
                 id="correo-pase"
                 ref="inputCorreo"
@@ -1029,7 +1137,7 @@ onBeforeUnmount(() => {
                 pattern="[^\s@]+@[^\s@]+\.[^\s@]+"
                 spellcheck="false"
                 required
-                :placeholder="t('meetup.emailLabel')"
+                :placeholder="t('meetup.emailHint')"
                 :disabled="enviando"
                 @focus="auFocusCaret"
                 @blur="auBlurCaret"
@@ -1037,10 +1145,10 @@ onBeforeUnmount(() => {
               />
             </div>
             <button
+              ref="btnPase"
               type="submit"
               class="pase-accion"
               :disabled="enviando"
-              :style="{ background: teintActuel, color: encrePase }"
             >
               {{ t('meetup.claim') }}
             </button>
@@ -1057,6 +1165,22 @@ onBeforeUnmount(() => {
 
       <div class="scene">
         <div
+          v-if="claim && evento"
+          class="bulle bulle--olee bulle--ouverte"
+          role="status"
+        >
+          <p class="bulle-texte">
+            {{ t('meetup.emailBubble') }}
+            <a
+              class="bulle-luma"
+              :href="evento.url"
+              target="_blank"
+              rel="noopener noreferrer"
+              :aria-label="t('meetup.eventAria', { name: evento.name })"
+            >luma</a>
+          </p>
+        </div>
+        <div
           v-if="bulle && !claim && !inicio"
           class="bulle"
           :class="bulle.phase === 'points' && 'bulle--points'"
@@ -1069,7 +1193,7 @@ onBeforeUnmount(() => {
 
         <div
           class="avatar"
-          :class="[claim && 'avatar--geant', inicio && 'avatar--abajo']"
+          :class="(inicio || claim) && 'avatar--abajo'"
           @click="auClicPrincipal"
           @contextmenu.prevent="auClicSecondaire"
         >
@@ -1404,10 +1528,11 @@ onBeforeUnmount(() => {
 }
 
 .mur--claim .copie {
-  /* Le duo reste aligne a gauche ; on le recentre comme un seul bloc sur le QR. */
   align-items: center;
-  width: var(--copie-w);
-  transform: translate(calc((var(--qr-w) - var(--copie-w)) / 2), 0);
+  width: min(100%, 22rem);
+  margin-inline: auto;
+  /* Meme calage que le titre de l'ouverture : en haut, au centre de la boule. */
+  transform: translate(calc((var(--avatar-w) + var(--duo-gap)) / 2), calc(3rem - 28vh - var(--texto-alto, 0) * 1rem));
 }
 
 .qr {
@@ -1426,8 +1551,11 @@ onBeforeUnmount(() => {
 }
 
 .mur--claim .qr {
+  left: 50%;
+  width: min(100%, 22rem);
   opacity: 1;
-  transform: translate(0, 7.2rem) scale(1);
+  /* Juste sous le titre, qui est monte de 28vh. Le mobile remet le flux plus bas. */
+  transform: translate(-50%, calc(3rem - 28vh + 4.25rem - var(--texto-alto, 0) * 1rem));
   pointer-events: auto;
 }
 
@@ -1457,12 +1585,13 @@ onBeforeUnmount(() => {
   min-height: 3.25rem;
   padding: 0 1.15rem;
   background: #f2f2f4;
+  border: 1px solid #b0b2b8;
   border-radius: 999px;
 }
 
 .pase-caja:focus-within {
   background: #fff;
-  box-shadow: 0 0 0 2px #111;
+  border-color: #9b9da4;
 }
 
 .pase-etiqueta {
@@ -1493,6 +1622,12 @@ onBeforeUnmount(() => {
   color: #8a8a8a;
 }
 
+.pase-marca {
+  flex: none;
+  margin-right: 0.65rem;
+  color: #8a8a8a;
+}
+
 .pase-accion {
   display: flex;
   align-items: center;
@@ -1503,10 +1638,16 @@ onBeforeUnmount(() => {
   padding: 0 1.15rem;
   border: 0;
   border-radius: 999px;
+  background: #111;
+  color: #fff;
   font: inherit;
   font-size: 1rem;
   letter-spacing: -0.01em;
   cursor: pointer;
+}
+
+.pase-accion:hover {
+  background: #2a2a2a;
 }
 
 .pase-accion:disabled {
@@ -1669,6 +1810,24 @@ onBeforeUnmount(() => {
   opacity: 1;
   transform: translateY(0);
   font-size: var(--pronto-tam, 2.25rem);
+}
+
+/* Page Luma, a droite du titre. Le carre suit la taille de la ligne. */
+.evento {
+  display: inline-flex;
+  margin-left: 0.22em;
+  vertical-align: 0.06em;
+  color: inherit;
+  text-decoration: none;
+}
+
+.evento svg {
+  width: 0.38em;
+  height: 0.38em;
+}
+
+.evento:hover {
+  color: var(--ink);
 }
 
 .claim {
@@ -1983,13 +2142,9 @@ onBeforeUnmount(() => {
   cursor: pointer;
 }
 
-.avatar--geant {
-  transform: translate(30vw, 0) scale(2.5);
-}
-
 /*
- * Pendant du claim, sur l'autre axe : le claim envoie la boule a droite, ici
- * elle descend et grossit vers le bas pour laisser le texte en haut.
+ * Ouverture : la boule descend et grossit vers le bas, centree, pour laisser
+ * le texte en haut.
  */
 .avatar--abajo {
   transform-origin: center top;
@@ -2047,6 +2202,68 @@ onBeforeUnmount(() => {
   font-weight: 400;
   letter-spacing: -0.025em;
   line-height: 1.15;
+}
+
+/*
+ * A cote du visage. Le lien « luma » ouvre l'evenement du serveur
+ * (`/wall/state`), le meme pour tout le monde.
+ */
+.mur--claim .bulle--olee {
+  position: fixed;
+  top: auto;
+  right: auto;
+  left: calc(50% + 14vw);
+  height: auto;
+  bottom: 24vh;
+  z-index: 6;
+  width: min(17rem, 34vw);
+  max-width: none;
+  padding: 1.15rem 1.3rem 1.2rem;
+  border: 0;
+  border-radius: 1.55rem 1.55rem 1.55rem 0.45rem;
+  background: #111;
+  color: #fff;
+  opacity: 0;
+  pointer-events: none;
+  transform: scale(0.86);
+  transform-origin: left center;
+  transition:
+    opacity 0.28s ease-out,
+    transform 0.28s ease-out;
+}
+
+.mur--claim .bulle--olee .bulle-texte {
+  font-size: clamp(1.15rem, 1.45vw, 1.4rem);
+  line-height: 1.28;
+  color: #fff;
+  text-wrap: pretty;
+}
+
+.bulle-luma {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 0.14em;
+  pointer-events: auto;
+}
+
+.bulle-luma:hover {
+  color: #fff;
+}
+
+.mur--claim .bulle--olee::after {
+  right: auto;
+  left: -7px;
+  bottom: 1.15rem;
+  width: 14px;
+  height: 14px;
+  background: #111;
+  border: 0;
+  transform: rotate(45deg);
+}
+
+.mur--claim .bulle--olee.bulle--ouverte {
+  opacity: 1;
+  transform: scale(1);
 }
 
 .points {
@@ -2143,12 +2360,9 @@ onBeforeUnmount(() => {
    * Le duo est le contenant positionne. Sans ca, le bot cale en absolu se
    * mesurerait au bloc de texte et non a l'ecran.
    */
-  .mur--inicio .duo {
+  .mur--inicio .duo,
+  .mur--claim .duo {
     position: static;
-  }
-
-  .avatar--geant {
-    transform: translate(8vw, 6vh) scale(1.45);
   }
 
   /*
@@ -2160,7 +2374,8 @@ onBeforeUnmount(() => {
    * est trop court pour ce calage. L'altura monte toujours. L'echelle
    * reste celle du grand cercle.
    */
-  .mur--inicio .scene {
+  .mur--inicio .scene,
+  .mur--claim .scene {
     position: absolute;
     left: 50%;
     z-index: 0;
@@ -2191,12 +2406,19 @@ onBeforeUnmount(() => {
     font-size: min(var(--pronto-tam, 2.25rem), clamp(1.1rem, 5.8vw, 1.45rem));
   }
 
+  .mur--claim .bulle--olee {
+    left: auto;
+    right: 1rem;
+    bottom: 26vh;
+    width: min(16rem, calc(100vw - 2rem));
+  }
+
   .bulle {
     left: 4%;
     top: -4%;
   }
 
-  /* Claim : la firma ne tient pas. Titre, bot et courrier forment un bloc centre. */
+  /* Claim : la firma ne tient pas. Le titre et le courrier restent au centre, la boule en bas. */
   .mur--claim .presente {
     display: none;
   }
@@ -2214,19 +2436,11 @@ onBeforeUnmount(() => {
     gap: 0.85rem;
   }
 
-  .mur--claim .scene {
-    order: 1;
-  }
-
   .mur--claim .qr {
     order: 2;
     width: min(100%, 22rem);
     margin-top: 0;
     padding-bottom: 0;
-  }
-
-  .mur--claim .avatar--geant {
-    transform: none;
   }
 }
 

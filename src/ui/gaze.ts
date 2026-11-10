@@ -30,13 +30,12 @@ export const PITCH_MAX = 13
 export const PITCH = 10
 
 /**
- * Tangage quand le bot lit un champ. `ny = 1` ne donne que `PITCH - PITCH_MAX`,
- * a peine sous l'equateur, et le caret tombe souvent pres du centre : on pose
- * donc le regard plus bas, pour que la lecture se voie. Pas jusqu'au limbe :
- * a -55 les yeux etaient a 0,79 rayon. Ici ils restent dans le bas du visage,
- * vers la ligne du champ. Le lacet suit les lettres. CHOISI, pas releve.
+ * Tangage quand le bot lit un champ. Le champ est au-dessus de la boule, sur
+ * le meme ecran que l'ouverture : un regard trop bas tombe sous le bord et on
+ * ne voit plus le va-et-vient. On garde les yeux dans la partie visible, et
+ * le lacet va d'un bord du visage a l'autre. CHOISI, pas releve.
  */
-export const PITCH_LECTURE = -22
+export const PITCH_LECTURE = 18
 
 /**
  * Amplitude du lacet quand on lit un champ, et rattrapage plus court. Pour la
@@ -45,6 +44,9 @@ export const PITCH_LECTURE = -22
  * a peine. Ici le champ ENTIER vaut tout le debattement, et les yeux le
  * rattrapent en 0,12 s au lieu de 0,24 : ils doivent arriver avec la lettre.
  * CHOISIS, pas releves. Le test de visibilite en lecture couvre le bord.
+ *
+ * Pas de `-TURN` ici : le champ est centre au-dessus de la boule, pas dans un
+ * panneau a gauche. Le caret promene les yeux d'un bord du visage a l'autre.
  */
 export const YAW_LECTURE = 34
 export const LOOK_LECTURE = 0.12
@@ -162,8 +164,8 @@ export interface Aim {
   /** false = aucun pointeur connu : la tete reste tournee, mais elle revit */
   pointer: boolean
   /**
-   * true = on lit un champ. Le tangage se pose en bas (`PITCH_LECTURE`) et le
-   * lacet suit le caret. `ny` est alors ignore.
+   * true = on lit un champ. Le tangage se pose (`PITCH_LECTURE`) et le lacet
+   * suit le caret d'un bord a l'autre. `ny` est alors ignore.
    */
   lire?: boolean
   /**
@@ -188,7 +190,7 @@ export interface Aim {
  */
 export function lookTarget({ nx, ny, tour, pointer, lire, mirada = 0 }: Aim): Look {
   return {
-    yaw: -TURN + nx * (lire ? YAW_LECTURE : YAW_MAX) + mirada,
+    yaw: (lire ? nx * YAW_LECTURE : -TURN + nx * YAW_MAX) + mirada,
     // tangage positif = regard vers le haut, alors que le y de l'ecran descend
     pitch: lire ? PITCH_LECTURE : PITCH - ny * PITCH_MAX,
     mix: tour,
