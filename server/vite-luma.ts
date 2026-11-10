@@ -1,6 +1,6 @@
 import { loadEnv, type Plugin } from 'vite'
-import { AsistenciaError, type CodigoAsistencia } from '../src/meetup/asistencia'
-import { invalidateLuma, listarEventos, listarTipos, readWallState, registrarAsistencia, type LumaEnv } from './luma'
+import { AsistenciaError, type CodigoAsistencia } from '../src/meetup/asistencia.ts'
+import { invalidateLuma, listarEventos, listarTipos, readWallState, registrarAsistencia, type LumaEnv } from './luma.ts'
 
 function statutDe(codigo: CodigoAsistencia) {
   if (codigo === 'correo') return 400

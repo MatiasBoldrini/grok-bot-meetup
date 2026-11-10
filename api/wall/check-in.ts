@@ -1,8 +1,5 @@
-import { AsistenciaError, type CodigoAsistencia } from '../../src/meetup/asistencia'
-import { registrarAsistencia } from '../../server/luma'
-
-type Req = { method?: string; body?: unknown }
-type Res = { status: (n: number) => { json: (o: unknown) => void } }
+import { AsistenciaError, type CodigoAsistencia } from '../../src/meetup/asistencia.ts'
+import { registrarAsistencia } from '../../server/luma.ts'
 
 function statutDe(codigo: CodigoAsistencia) {
   if (codigo === 'correo') return 400
@@ -13,23 +10,28 @@ function statutDe(codigo: CodigoAsistencia) {
   return 502
 }
 
-export default async function handler(req: Req, res: Res) {
-  if (req.method !== 'POST') {
-    res.status(405).json({ error: 'luma' })
-    return
-  }
-  const body = typeof req.body === 'string' ? (JSON.parse(req.body || '{}') as { email?: unknown }) : (req.body as { email?: unknown } | undefined)
-  try {
-    const resultado = await registrarAsistencia(
-      {
-        apiKey: process.env.LUMA_API_KEY || '',
-        eventId: process.env.LUMA_EVENT_ID || ''
-      },
-      String(body?.email ?? '')
-    )
-    res.status(200).json(resultado)
-  } catch (e) {
-    const codigo = e instanceof AsistenciaError ? e.codigo : 'luma'
-    res.status(statutDe(codigo)).json({ error: codigo })
+export default {
+  async fetch(request: Request) {
+    if (request.method !== 'POST') return Response.json({ error: 'luma' }, { status: 405 })
+    let email = ''
+    try {
+      const body = (await request.json()) as { email?: unknown }
+      email = String(body?.email ?? '')
+    } catch {
+      email = ''
+    }
+    try {
+      const resultado = await registrarAsistencia(
+        {
+          apiKey: process.env.LUMA_API_KEY || '',
+          eventId: process.env.LUMA_EVENT_ID || ''
+        },
+        email
+      )
+      return Response.json(resultado)
+    } catch (e) {
+      const codigo = e instanceof AsistenciaError ? e.codigo : 'luma'
+      return Response.json({ error: codigo }, { status: statutDe(codigo) })
+    }
   }
 }

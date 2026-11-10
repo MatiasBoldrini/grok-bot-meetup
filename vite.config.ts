@@ -2,7 +2,7 @@ import { fileURLToPath, URL } from 'node:url'
 import tailwindcss from '@tailwindcss/vite'
 import vue from '@vitejs/plugin-vue'
 import { defineConfig } from 'vite'
-import { lumaWall } from './server/vite-luma'
+import { lumaWall } from './server/vite-luma.ts'
 
 export default defineConfig({
   plugins: [vue(), tailwindcss(), lumaWall()],

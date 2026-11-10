@@ -1,4 +1,4 @@
-import { guestName, type LumaGuestRaw } from './guest'
+import { guestName, type LumaGuestRaw } from './guest.ts'
 
 /** Codes renvoyes au mur. Pas le corps Luma : il ne doit pas fuiter. */
 export type CodigoAsistencia = 'correo' | 'config' | 'omitido' | 'ausente' | 'espera' | 'luma'

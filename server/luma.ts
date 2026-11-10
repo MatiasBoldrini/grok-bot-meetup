@@ -5,8 +5,8 @@ import {
   paseDeInvitado,
   yaEntro,
   type Pase
-} from '../src/meetup/asistencia'
-import { toAllocation, type Allocation, type LumaGuestRaw } from '../src/meetup/guest'
+} from '../src/meetup/asistencia.ts'
+import { toAllocation, type Allocation, type LumaGuestRaw } from '../src/meetup/guest.ts'
 
 const LUMA = 'https://public-api.luma.com'
 
