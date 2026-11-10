@@ -147,8 +147,8 @@ const en = {
     soon: 'Starting shortly',
     eventAria: '{name} on Luma',
     back: 'Back',
-    tabTitle: 'Grok Bot Meetup',
-    description: 'Check in and claim Cursor credits.'
+    tabTitle: 'Grok bot meetup 18/11',
+    description: 'Entra a para reclamar los créditos'
   },
 
   wall: {

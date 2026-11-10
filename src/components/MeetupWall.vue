@@ -151,11 +151,11 @@ function poserCaret() {
   pointCaret.x = rect.left + bord + pad + largeurCaret(input, indexCaret(input)) - input.scrollLeft
   pointCaret.y = rect.top + rect.height / 2
   /*
-   * Avance dans le champ, -1 a 1. Un courriel remplit rarement tout le champ :
-   * le debattement entier est atteint aux deux tiers de sa largeur, pour que
-   * les yeux parcourent leur course pendant qu'on tape, pas seulement a la fin.
+   * Avance dans le champ, -1 a 1, sur TOUTE sa largeur. Les deux tiers
+   * saturaient le lacet des le milieu d'une adresse : les yeux restaient
+   * colles au bord droit, et le masque coupait celui de droite.
    */
-  const course = Math.max(1, (rect.width - bord * 2 - pad * 2) * 0.66)
+  const course = Math.max(1, rect.width - bord * 2 - pad * 2)
   const avance = (pointCaret.x - rect.left - bord - pad) / course
   pointCaret.nx = Math.min(1, Math.max(0, avance)) * 2 - 1
 }
@@ -1662,7 +1662,14 @@ onBeforeUnmount(() => {
   background: transparent;
   color: #111;
   font: inherit;
-  font-size: 1.05rem;
+  /*
+   * iOS agrandit toute la page au focus si la police calculee passe sous
+   * 16 px. `max` garde le corps actuel et empeche de descendre en dessous.
+   * `appearance` retire le champ natif, qui se dessinait plus gros.
+   */
+  font-size: max(16px, 1.05rem);
+  appearance: none;
+  touch-action: manipulation;
   letter-spacing: -0.01em;
 }
 
@@ -1818,6 +1825,15 @@ onBeforeUnmount(() => {
   text-align: center;
 }
 
+/*
+ * 1 a 64rem, la taille reglee. Au-dela le titre, la ligne d'attente et le
+ * bouton grandissent avec la fenetre, jusqu'a 1,8. Sous 64rem la media
+ * query remplace ces tailles.
+ */
+.mur--inicio {
+  --escena: clamp(1, 100vw / 64rem, 1.8);
+}
+
 .mur--inicio .lieu {
   /* La colonne reste a 20rem, mais le mot a 76 px ne tient pas dedans : le
      clip du reveal coupait alors la fin. La boite suit le texte, centree
@@ -1825,7 +1841,7 @@ onBeforeUnmount(() => {
   width: max-content;
   max-width: none;
   overflow: visible;
-  font-size: var(--titulo-tam, 4.75rem);
+  font-size: calc(var(--titulo-tam, 4.75rem) * var(--escena, 1));
 }
 
 .mur--inicio .lieu--reveal {
@@ -1868,11 +1884,11 @@ onBeforeUnmount(() => {
 
 .mur--inicio .pronto {
   margin-top: 0.9rem;
-  max-height: 4.5rem;
+  max-height: calc(4.5rem * var(--escena, 1));
   overflow: visible;
   opacity: 1;
   transform: translateY(0);
-  font-size: var(--pronto-tam, 2.25rem);
+  font-size: calc(var(--pronto-tam, 2.25rem) * var(--escena, 1));
 }
 
 /* Page Luma, a droite du titre. Le carre suit la taille de la ligne. */
@@ -1898,12 +1914,12 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   margin: 1.15rem 0 0;
-  padding: 0.42rem 1.05rem;
+  padding: calc(0.42rem * var(--escena, 1)) calc(1.05rem * var(--escena, 1));
   border: 0;
   border-radius: 999px;
   background: #111;
   font-family: 'Universal Sans Text', sans-serif;
-  font-size: 0.92rem;
+  font-size: calc(0.92rem * var(--escena, 1));
   font-weight: 400;
   letter-spacing: -0.01em;
   color: #fff;
@@ -2408,6 +2424,8 @@ onBeforeUnmount(() => {
 
   .haut {
     --avatar-w: min(72vw, 22rem);
+    /* Du bas de l'ecran jusqu'au cercle peint (yeux a 97dvh, bord a 18,4 %). */
+    --dessus-bot: calc(3dvh + 0.634 * var(--avatar-w) * var(--bot-escala, 2.75) / 2.75);
     flex-direction: column;
     justify-content: flex-start;
     padding: 3.4rem 1.4rem 0.4rem;
@@ -2421,9 +2439,14 @@ onBeforeUnmount(() => {
     margin-inline: auto;
   }
 
-  /* Meme descente que le bureau. Positif sur --texto-alto rapproche le titre du rail. */
+  /* Le bloc descend jusqu'au bot. Positif sur --texto-alto le remonte. */
+  .mur--inicio .haut {
+    justify-content: flex-end;
+    padding-bottom: calc(var(--dessus-bot) + 1.15rem + var(--texto-alto, 0) * 1rem);
+  }
+
   .mur--inicio .copie {
-    margin-top: calc(1.75rem - var(--texto-alto, 0) * 1rem);
+    margin-top: 0;
   }
 
   .ancre {
@@ -2505,12 +2528,35 @@ onBeforeUnmount(() => {
     font-size: min(var(--pronto-tam, 2.25rem), clamp(1.1rem, 5.8vw, 1.45rem));
   }
 
+  /*
+   * La bulle est contenue par la scene (son transform cree le bloc). On la
+   * centre et on pose son milieu sur le haut du cercle peint (18,4 %), pour
+   * qu'elle le recouvre a moitie.
+   */
   .mur--claim .bulle--olee {
-    left: auto;
-    right: 1rem;
-    bottom: 26vh;
-    width: max-content;
-    max-width: min(22rem, calc(100vw - 2rem));
+    left: 50%;
+    right: auto;
+    bottom: auto;
+    top: calc(0.184 * var(--avatar-w) * var(--bot-escala, 2.75) * 2.4 / 2.75);
+    width: min(17rem, calc(100vw - 3rem));
+    max-width: min(17rem, calc(100vw - 3rem));
+    transform: translate(-50%, -50%) scale(0.86);
+    transform-origin: center center;
+  }
+
+  .mur--claim .bulle--olee.bulle--ouverte {
+    transform: translate(-50%, -50%) scale(1);
+  }
+
+  .mur--claim .bulle--olee::after {
+    left: 50%;
+    right: auto;
+    bottom: -7px;
+    margin-left: -6px;
+    border-left: 0;
+    border-right: 1px solid #b0b2b8;
+    border-bottom: 1px solid #b0b2b8;
+    transform: rotate(45deg);
   }
 
   .bulle {
@@ -2518,19 +2564,22 @@ onBeforeUnmount(() => {
     top: -4%;
   }
 
-  /* Claim : la firma ne tient pas. Le titre et le courrier restent au centre, la boule en bas. */
+  /* Claim : la firma ne tient pas. Titre et courriel sous « Volver », la boule sur le bot. */
   .mur--claim .presente {
     display: none;
   }
 
+  /* Claim : titre et courriel juste au-dessus de la bulle, le bot reste au bord. */
   .mur--claim .haut {
-    justify-content: center;
+    justify-content: flex-end;
+    padding-top: 4.5rem;
+    padding-bottom: calc(var(--dessus-bot) + 4.6rem);
   }
 
   .mur--claim .duo {
-    flex: 1;
+    flex: 0 0 auto;
     align-self: stretch;
-    justify-content: center;
+    justify-content: flex-start;
     width: 100%;
     min-height: 0;
     gap: 0.85rem;

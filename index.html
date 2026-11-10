@@ -1,46 +1,51 @@
 <!doctype html>
 <!--
-  `lang` is rewritten on startup by src/i18n. Meta tags stay English in the
-  HTML: social crawlers (X, Slack, Discord) do not run JavaScript, so the
-  shared preview is whatever this file serves. The wall itself is `/`.
+  `lang` is rewritten on startup by src/i18n. Social crawlers (X, Slack,
+  WhatsApp, Discord) do not run JavaScript, so the shared preview is whatever
+  this file serves. The wall itself is `/`.
 -->
-<html lang="en">
+<html lang="es">
   <head>
     <!-- must sit in the first 1024 bytes, so first -->
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
-    <title>Grok Bot Meetup</title>
+    <title>Grok bot meetup 18/11</title>
     <meta
       name="description"
-      content="Check in and claim Cursor credits."
+      content="Entra a para reclamar los créditos"
     />
 
     <meta property="og:type" content="website" />
-    <meta property="og:title" content="Grok Bot Meetup" />
+    <meta property="og:title" content="Grok bot meetup 18/11" />
     <meta
       property="og:description"
-      content="Check in and claim Cursor credits."
+      content="Entra a para reclamar los créditos"
     />
     <meta property="og:site_name" content="Grok Bot" />
-    <meta property="og:locale" content="en_US" />
+    <meta property="og:locale" content="es_AR" />
     <meta property="og:locale:alternate" content="fr_FR" />
     <meta property="og:locale:alternate" content="zh_CN" />
 
     <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Grok bot meetup 18/11" />
+    <meta name="twitter:description" content="Entra a para reclamar los créditos" />
 
     <!--
       Absolute URLs only. Update these three if the Vercel host changes.
+      JPEG, not WebP: WhatsApp and some crawlers drop the preview otherwise.
+      1200×1189 keeps the poster whole.
     -->
-    <link rel="canonical" href="https://bloub-nine.vercel.app/" />
-    <meta property="og:url" content="https://bloub-nine.vercel.app/" />
-    <meta property="og:image" content="https://bloub-nine.vercel.app/og.png" />
-    <meta property="og:image:type" content="image/png" />
+    <link rel="canonical" href="https://grok-bot-meetup.vercel.app/" />
+    <meta property="og:url" content="https://grok-bot-meetup.vercel.app/" />
+    <meta property="og:image" content="https://grok-bot-meetup.vercel.app/brand/og.jpg" />
+    <meta name="twitter:image" content="https://grok-bot-meetup.vercel.app/brand/og.jpg" />
+    <meta property="og:image:type" content="image/jpeg" />
     <meta property="og:image:width" content="1200" />
-    <meta property="og:image:height" content="630" />
+    <meta property="og:image:height" content="1189" />
     <meta
       property="og:image:alt"
-      content="Grok Bot Meetup"
+      content="Grok Bot Mendoza Meetup, Wednesday, Nov 18"
     />
 
     <link rel="icon" href="/favicon.png?v=mark" type="image/png" sizes="512x512" />

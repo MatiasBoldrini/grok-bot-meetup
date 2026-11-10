@@ -40,15 +40,16 @@ export const PITCH_LECTURE = 18
 /**
  * Amplitude du lacet quand on lit un champ, et rattrapage plus court. Pour la
  * souris, 16deg sur une demi-fenetre suffisent ; pour des lettres, le caret ne
- * parcourt que la largeur du champ, et a 16deg l'avance de la frappe se voyait
- * a peine. Ici le champ ENTIER vaut tout le debattement, et les yeux le
- * rattrapent en 0,12 s au lieu de 0,24 : ils doivent arriver avec la lettre.
- * CHOISIS, pas releves. Le test de visibilite en lecture couvre le bord.
+ * parcourt que la largeur du champ. 34deg collait l'oeil exterieur au limbe :
+ * le masque le coupait, et l'oeil avait l'air casse — surtout a droite, la ou
+ * finit une adresse. 18deg reste plus large que le suivi de la souris, et les
+ * deux yeux restent entiers. CHOISI, pas releve. Les yeux rattrapent le caret
+ * en 0,12 s au lieu de 0,24 : ils doivent arriver avec la lettre.
  *
  * Pas de `-TURN` ici : le champ est centre au-dessus de la boule, pas dans un
- * panneau a gauche. Le caret promene les yeux d'un bord du visage a l'autre.
+ * panneau a gauche. Le caret promene les yeux d'un cote du visage a l'autre.
  */
-export const YAW_LECTURE = 34
+export const YAW_LECTURE = 18
 export const LOOK_LECTURE = 0.12
 
 /**

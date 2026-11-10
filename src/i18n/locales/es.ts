@@ -145,8 +145,8 @@ const es: typeof en = {
     soon: 'Comenzamos en breve',
     eventAria: '{name} en Luma',
     back: 'Volver',
-    tabTitle: 'Grok Bot Meetup',
-    description: 'Check-in y créditos de Cursor.'
+    tabTitle: 'Grok bot meetup 18/11',
+    description: 'Entra a para reclamar los créditos'
   },
 
   wall: {

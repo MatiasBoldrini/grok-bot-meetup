@@ -9,8 +9,8 @@ import { OVERLAY_BASE } from '@/meetup/overlay'
 
 /**
  * Bots derriere l'overlay. La forme et les yeux sont poses une fois.
- * Le clic principal fait tourner la couleur ; le clic secondaire ouvre le
- * menu. Seule la hauteur avance ; l'abscisse reste fixe.
+ * Le clic principal change CE bot : forme, couleur, yeux. Le clic
+ * secondaire ouvre le menu. Seule la hauteur avance ; l'abscisse reste fixe.
  */
 const props = withDefaults(
   defineProps<{
@@ -81,6 +81,8 @@ function borne(n: number, max: number) {
 interface Grain {
   engine: BotEngine
   encre: string
+  forme: number
+  regard: number
   phase: number
   x0: number
   duree: number
@@ -113,6 +115,8 @@ function fabriquer(): Grain[] {
         EXPRESSION_BY_ID.get(regard) ?? null
       ),
       encre: COLOR_BY_ID.get(couleur)?.hex ?? '#0a0a0c',
+      forme: i % formes.length,
+      regard: i % regards.length,
       phase,
       x0: 4 + tirage(i, 2) * 84,
       duree: 16 + tirage(i, 6) * 22,
@@ -185,13 +189,28 @@ const emit = defineEmits<{
   choisir: [i: number, x: number, y: number]
 }>()
 
-/** Clic principal : la couleur suivante du catalogue. */
-function teindre(i: number) {
+function autreIndex(n: number, actuel: number) {
+  if (n <= 1) return actuel
+  let next = actuel
+  while (next === actuel) next = Math.floor(Math.random() * n)
+  return next
+}
+
+/** Ce bot-la, pas le grand : une autre forme, une autre couleur, d'autres yeux. */
+function varier(i: number) {
   const g = grains.value[i]
   if (!g) return
-  const actuel = ORDEN_COLOR.findIndex((id) => COLOR_BY_ID.get(id)?.hex === g.encre)
-  const next = ORDEN_COLOR[(actuel + 1) % ORDEN_COLOR.length]!
-  g.encre = COLOR_BY_ID.get(next)?.hex ?? g.encre
+  const formes = SHAPES.slice(0, borne(props.formas, SHAPES.length))
+  const couleurs = ORDEN_COLOR.slice(0, borne(props.colores, COLORS.length))
+  const regards = ORDEN_OJO.slice(0, borne(props.ojos, EXPRESSIONS.length))
+  const now = clock + g.phase
+  g.forme = autreIndex(formes.length, g.forme)
+  g.regard = autreIndex(regards.length, g.regard)
+  const actuel = couleurs.findIndex((id) => COLOR_BY_ID.get(id)?.hex === g.encre)
+  const teinte = actuel < 0 ? Math.floor(Math.random() * couleurs.length) : autreIndex(couleurs.length, actuel)
+  g.engine.setShape(formes[g.forme]!.radii, now)
+  g.engine.setExpression(EXPRESSION_BY_ID.get(regards[g.regard]!) ?? null, now)
+  g.encre = COLOR_BY_ID.get(couleurs[teinte]!)?.hex ?? g.encre
   triggerRef(grains)
 }
 
@@ -221,8 +240,8 @@ function choisir(i: number, e: Event) {
         height: `${grain.base * tamano}px`,
         transform: `translate(${poses[i]!.x}vw, ${poses[i]!.y}vh) rotate(${poses[i]!.rot}deg)`
       }"
-      @click.stop="teindre(i)"
-      @keydown.enter.prevent="teindre(i)"
+      @click.stop="varier(i)"
+      @keydown.enter.prevent="varier(i)"
       @contextmenu.prevent.stop="choisir(i, $event)"
     >
       <svg
