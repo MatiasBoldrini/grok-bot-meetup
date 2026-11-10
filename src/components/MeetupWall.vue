@@ -63,6 +63,8 @@ const feed = ref<Invite[]>([])
 const vus = new Set<string>()
 let pret = false
 const bulle = ref<{ nom: string; phase: 'points' | 'texte' } | null>(null)
+/** « olee », des que la souris bouge apres un courriel valide. */
+const olee = ref(false)
 const state = ref<StateId>('idle')
 const block = ref(0)
 const playing = ref(true)
@@ -805,6 +807,7 @@ function lacherFuite() {
   fuiteRetour = false
   fuiteTerminee = false
   fuiteQuietoDesde = 0
+  olee.value = false
   fuite.x = fuite.y = fuiteVel.x = fuiteVel.y = 0
   fuiteRecorrido = 0
   fuitePointeur = null
@@ -958,6 +961,7 @@ function auFuiteClaim(e: PointerEvent) {
     if (!courrielPose()) return
     fuiteArmee = true
   }
+  olee.value = true
   if (!fuiteRaf && fuiteRecorrido < FUITE_TOTAL) fuiteRaf = requestAnimationFrame(boucleFuite)
 }
 
@@ -1165,11 +1169,13 @@ onBeforeUnmount(() => {
 
       <div class="scene">
         <div
-          v-if="claim && evento"
+          v-if="claim && (evento || olee)"
           class="bulle bulle--olee bulle--ouverte"
+          :class="olee && 'bulle--grito'"
           role="status"
         >
-          <p class="bulle-texte">
+          <p v-if="olee" class="bulle-texte">{{ t('meetup.olee') }}</p>
+          <p v-else-if="evento" class="bulle-texte">
             {{ t('meetup.emailBubble') }}
             <a
               class="bulle-luma"
@@ -2264,6 +2270,15 @@ onBeforeUnmount(() => {
 .mur--claim .bulle--olee.bulle--ouverte {
   opacity: 1;
   transform: scale(1);
+}
+
+.mur--claim .bulle--olee.bulle--grito {
+  width: auto;
+}
+
+.mur--claim .bulle--olee.bulle--grito .bulle-texte {
+  font-size: clamp(2rem, 3.1vw, 2.75rem);
+  line-height: 1.05;
 }
 
 .points {
