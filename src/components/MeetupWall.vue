@@ -720,6 +720,21 @@ function mensajePase(codigo: string) {
   return t('meetup.emailFailed')
 }
 
+function sourisFine() {
+  return window.matchMedia('(pointer: fine)').matches
+}
+
+/** Entree soumet au clavier tactile. Sur une souris, il faut cliquer le bouton. */
+function auEnterCorreo(e: KeyboardEvent) {
+  e.preventDefault()
+  if (sourisFine()) return
+  void enviarCorreo()
+}
+
+function auEnterBoton(e: KeyboardEvent) {
+  if (sourisFine()) e.preventDefault()
+}
+
 async function enviarCorreo() {
   if (enviando.value) return
   const campo = inputCorreo.value
@@ -829,7 +844,9 @@ function auClavier(e: KeyboardEvent) {
  *
  * Le chemin qu'il peut parcourir est un BUDGET (`FUITE_TOTAL`, additionne).
  * Epuise, des que la souris lache, ou coince contre un bord sans avancer,
- * il revient a sa place et n'en repart plus : le clic redevient possible. Un rayon autour de
+ * il revient a sa place et n'en repart plus : le clic redevient possible.
+ * Un curseur rapide brulait ce budget en une fraction de seconde : la partie
+ * dure au moins `FUITE_MIN`, meme si la distance est deja faite. Un rayon autour de
  * l'origine ne suffisait pas, le curseur le faisait glisser le long du bord
  * sans fin. La fenetre le borne aussi : il ne sort jamais de l'ecran.
  *
@@ -845,12 +862,14 @@ const FUITE_ALCANCE = 120
 const FUITE_VMAX = 560
 const FUITE_SUAVIDAD = 9
 const FUITE_TOTAL = 510
+const FUITE_MIN = 3000
 const fuite = { x: 0, y: 0 }
 const fuiteVel = { x: 0, y: 0 }
 let fuitePointeur: { x: number; y: number } | null = null
 let fuiteRecorrido = 0
 let fuiteRaf = 0
 let fuiteHorloge = 0
+let fuiteDesde = 0
 /** Arme au premier mouvement de souris qui suit une adresse valide. */
 let fuiteArmee = false
 /** La fuite est finie : on le ramene, et il ne repart plus. */
@@ -873,6 +892,7 @@ function lacherFuite() {
   risa.value = false
   fuite.x = fuite.y = fuiteVel.x = fuiteVel.y = 0
   fuiteRecorrido = 0
+  fuiteDesde = 0
   fuitePointeur = null
   poserFuite(btnPase.value)
 }
@@ -904,6 +924,7 @@ function boucleFuite(ms: number) {
   if (fuiteCalme()) {
     fuite.x = fuite.y = fuiteVel.x = fuiteVel.y = 0
     fuiteRecorrido = 0
+    fuiteDesde = 0
     fuiteRetour = false
     fuiteTerminee = false
     fuiteQuietoDesde = 0
@@ -911,6 +932,8 @@ function boucleFuite(ms: number) {
     fuiteHorloge = 0
     return
   }
+  if (!fuiteDesde) fuiteDesde = ms
+  const joven = ms - fuiteDesde < FUITE_MIN
 
   // Le budget est fini : retour lisse vers la place d'origine, sans la souris.
   if (fuiteRetour) {
@@ -936,7 +959,7 @@ function boucleFuite(ms: number) {
   let cibleX = 0
   let cibleY = 0
   const p = fuitePointeur
-  if (p && fuiteRecorrido < FUITE_TOTAL) {
+  if (p && (joven || fuiteRecorrido < FUITE_TOTAL)) {
     const horsX = p.x < r.left ? r.left - p.x : p.x > r.right ? p.x - r.right : 0
     const horsY = p.y < r.top ? r.top - p.y : p.y > r.bottom ? p.y - r.bottom : 0
     const dist = Math.hypot(horsX, horsY)
@@ -979,25 +1002,29 @@ function boucleFuite(ms: number) {
   // le dernier morceau est raccourci pour tomber pile sur le budget
   let fait = Math.hypot(x - fuite.x, y - fuite.y)
   const resto = FUITE_TOTAL - fuiteRecorrido
-  if (fait > resto) {
+  if (!joven && resto <= 0) {
+    fait = 0
+    fuiteVel.x = fuiteVel.y = 0
+    fuiteRetour = true
+  } else if (!joven && fait > resto) {
     const f = resto / fait
     x = fuite.x + (x - fuite.x) * f
     y = fuite.y + (y - fuite.y) * f
     fait = resto
   }
   fuiteRecorrido += fait
-  if (fuiteRecorrido >= FUITE_TOTAL - 0.01) {
+  if (!joven && fuiteRecorrido >= FUITE_TOTAL - 0.01) {
     fuiteVel.x = fuiteVel.y = 0
     fuiteRetour = true
   }
-  // La souris a lache : la fuite est finie, on rentre.
+  // La souris a lache : la fuite est finie, on rentre. Pas avant le minimum.
   const pose = Math.hypot(fuite.x, fuite.y) > 1 || Math.hypot(x, y) > 1
   const arrete = Math.hypot(fuiteVel.x, fuiteVel.y) < 12
-  if (!fuiteRetour && pose && arrete && Math.hypot(cibleX, cibleY) < 1) {
+  if (!joven && !fuiteRetour && pose && arrete && Math.hypot(cibleX, cibleY) < 1) {
     fuiteRetour = true
   }
   // Coince contre un bord, il n'avance plus : au bout d'un instant, meme effet.
-  const clavado = pose && arrete && fait < 0.35
+  const clavado = !joven && pose && arrete && fait < 0.35
   if (clavado) {
     if (!fuiteQuietoDesde) fuiteQuietoDesde = ms
     else if (ms - fuiteQuietoDesde > 480) fuiteRetour = true
@@ -1009,7 +1036,10 @@ function boucleFuite(ms: number) {
   poserFuite(el)
 
   const enMarche =
-    fuiteRetour || Math.hypot(fuiteVel.x, fuiteVel.y) > 1.5 || Math.hypot(cibleX, cibleY) > 1.5
+    joven ||
+    fuiteRetour ||
+    Math.hypot(fuiteVel.x, fuiteVel.y) > 1.5 ||
+    Math.hypot(cibleX, cibleY) > 1.5
   if (enMarche) fuiteRaf = requestAnimationFrame(boucleFuite)
   else fuiteHorloge = 0
 }
@@ -1232,7 +1262,7 @@ onBeforeUnmount(() => {
                 :disabled="enviando"
                 @focus="auFocusCaret"
                 @blur="auBlurCaret"
-                @keydown.enter.prevent="enviarCorreo"
+                @keydown.enter="auEnterCorreo"
               />
             </div>
             <button
@@ -1240,6 +1270,7 @@ onBeforeUnmount(() => {
               type="submit"
               class="pase-accion"
               :disabled="enviando"
+              @keydown.enter="auEnterBoton"
             >
               {{ t('meetup.claim') }}
             </button>
